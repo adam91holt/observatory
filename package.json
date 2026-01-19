@@ -1,0 +1,40 @@
+{
+  "name": "@adam91holt/observatory",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent Command Center & Firehose Logger",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "ui/dist",
+    "README.md",
+    "API.md",
+    "IMPROVEMENTS.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:ui": "pnpm -C ui install && pnpm -C ui run build"
+  },
+  "dependencies": {
+    "tail": "^2.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/tail": "^2.2.3",
+    "clawdbot": "2026.1.17-1",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "clawdbot": ">=2026.1.17-1"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "clawdbot": {
+    "extensions": ["./dist/index.js"]
+  }
+}
