@@ -33,7 +33,21 @@ clawdbot plugins install /path/to/observatory
 
 ### 2. Configure Clawdbot
 
-Ensure your `~/.clawdbot/clawdbot.json` enables it (add `load.paths` only if you use a local path):
+If you installed from a package, you only need to enable it:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "observatory": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+If you installed from a local path, add `load.paths` pointing at the folder that contains the plugin `package.json`:
 
 ```json
 {
@@ -71,7 +85,7 @@ Navigate to **`http://localhost:18789/observatory/`** in your browser.
 For local development with hot reload:
 
 ```bash
-cd extensions/observatory/ui
+cd ui
 pnpm run dev
 ```
 
