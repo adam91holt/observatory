@@ -25,7 +25,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/tail": "^2.2.3",
-    "clawdbot": "2026.1.17-1",
+    "clawdbot": "link:/Users/adam/apps/clawdbot",
     "typescript": "^5.5.0"
   },
   "peerDependencies": {

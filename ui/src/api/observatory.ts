@@ -39,6 +39,14 @@ export async function getTranscript(
   )
 }
 
+export async function getTranscriptByKey(
+  sessionKey: string
+): Promise<TranscriptResponse> {
+  return fetchApi<TranscriptResponse>(
+    `/transcript?sessionKey=${encodeURIComponent(sessionKey)}`
+  )
+}
+
 export async function getRuns(): Promise<RunsResponse> {
   return fetchApi<RunsResponse>("/runs")
 }

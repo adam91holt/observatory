@@ -1,0 +1,11 @@
+{
+  "id": "observatory",
+  "name": "Observatory",
+  "description": "Agent Command Center & Firehose Logger",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

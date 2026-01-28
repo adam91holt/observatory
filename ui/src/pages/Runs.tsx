@@ -1,16 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
-import { formatDistanceToNow, format } from "date-fns"
-import { GitBranch, CheckCircle, XCircle, Clock, ArrowRight } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { formatDistanceToNow } from "date-fns"
+import { GitBranch, CheckCircle, XCircle, Clock, ArrowRight, ExternalLink } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
-import { MarkdownContent } from "@/components/features/MarkdownContent"
 import { getRuns } from "@/api/observatory"
 import { getAgentEmoji } from "@/lib/utils"
 
 export function Runs() {
+  const navigate = useNavigate()
   const { data: runsData, isLoading } = useQuery({
     queryKey: ["runs"],
     queryFn: getRuns,
@@ -30,6 +30,10 @@ export function Runs() {
   const getAgentFromSessionKey = (key: string) => {
     const match = key.match(/^agent:([^:]+):/)
     return match ? match[1] : "unknown"
+  }
+
+  const handleRunClick = (run: any) => {
+    navigate(`/runs/${run.runId}`)
   }
 
   return (
@@ -95,54 +99,58 @@ export function Runs() {
               const isSuccess = run.outcome?.success
 
               return (
-                <Collapsible key={run.runId}>
-                  <Card>
-                    <CollapsibleTrigger className="w-full">
-                      <CardContent className="flex items-center justify-between p-4">
-                        <div className="flex items-center gap-4">
-                          {/* Agent flow */}
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xl">
-                                {getAgentEmoji(requesterAgent)}
-                              </span>
-                              <span className="text-sm font-medium">
-                                {requesterAgent}
-                              </span>
-                            </div>
-                            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                            <div className="flex items-center gap-1">
-                              <span className="text-xl">
-                                {getAgentEmoji(childAgent)}
-                              </span>
-                              <span className="text-sm font-medium">
-                                {childAgent}
-                              </span>
-                            </div>
+                <Card
+                  key={run.runId}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors group"
+                  onClick={() => handleRunClick(run)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-4">
+                        {/* Agent flow */}
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xl">
+                              {getAgentEmoji(requesterAgent)}
+                            </span>
+                            <span className="text-sm font-medium">
+                              {requesterAgent}
+                            </span>
                           </div>
-
-                          {/* Status */}
-                          {isComplete ? (
-                            isSuccess ? (
-                              <Badge variant="success">
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                                Success
-                              </Badge>
-                            ) : (
-                              <Badge variant="destructive">
-                                <XCircle className="h-3 w-3 mr-1" />
-                                Failed
-                              </Badge>
-                            )
-                          ) : (
-                            <Badge variant="warning">
-                              <Clock className="h-3 w-3 mr-1" />
-                              Running
-                            </Badge>
-                          )}
+                          <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                          <div className="flex items-center gap-1">
+                            <span className="text-xl">
+                              {getAgentEmoji(childAgent)}
+                            </span>
+                            <span className="text-sm font-medium">
+                              {childAgent}
+                            </span>
+                          </div>
                         </div>
 
-                        <div className="text-sm text-muted-foreground">
+                        {/* Status */}
+                        {isComplete ? (
+                          isSuccess ? (
+                            <Badge variant="success">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Success
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive">
+                              <XCircle className="h-3 w-3 mr-1" />
+                              Failed
+                            </Badge>
+                          )
+                        ) : (
+                          <Badge variant="warning">
+                            <Clock className="h-3 w-3 mr-1" />
+                            Running
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
                           {run.completedAt ? (
                             formatDistanceToNow(new Date(run.completedAt), {
                               addSuffix: true,
@@ -154,65 +162,24 @@ export function Runs() {
                           ) : (
                             "Unknown time"
                           )}
-                        </div>
-                      </CardContent>
-                    </CollapsibleTrigger>
-
-                    <CollapsibleContent>
-                      <div className="border-t px-4 py-4 space-y-4">
-                        {/* Task */}
-                        <div>
-                          <h4 className="text-sm font-medium mb-2">Task</h4>
-                          <div className="rounded-lg bg-muted p-3 text-sm">
-                            <MarkdownContent content={run.task} />
-                          </div>
-                        </div>
-
-                        {/* Result */}
-                        {run.outcome?.result && (
-                          <div>
-                            <h4 className="text-sm font-medium mb-2">Result</h4>
-                            <div className="rounded-lg bg-muted p-3 text-sm">
-                              <MarkdownContent content={run.outcome.result} />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Error */}
-                        {run.outcome?.error && (
-                          <div>
-                            <h4 className="text-sm font-medium mb-2 text-red-500">
-                              Error
-                            </h4>
-                            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-500">
-                              {run.outcome.error}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Metadata */}
-                        <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                          <div>
-                            <span className="font-medium">Run ID:</span>{" "}
-                            <code className="font-mono">{run.runId}</code>
-                          </div>
-                          {run.startedAt && (
-                            <div>
-                              <span className="font-medium">Started:</span>{" "}
-                              {format(new Date(run.startedAt), "PPpp")}
-                            </div>
-                          )}
-                          {run.completedAt && (
-                            <div>
-                              <span className="font-medium">Completed:</span>{" "}
-                              {format(new Date(run.completedAt), "PPpp")}
-                            </div>
-                          )}
-                        </div>
+                        </span>
+                        <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                       </div>
-                    </CollapsibleContent>
-                  </Card>
-                </Collapsible>
+                    </div>
+
+                    {/* Task preview */}
+                    <div className="text-sm text-muted-foreground line-clamp-2">
+                      {run.task}
+                    </div>
+
+                    {/* Error indicator */}
+                    {run.outcome?.error && (
+                      <div className="mt-2 text-xs text-red-500">
+                        Error: {run.outcome.error}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               )
             })}
 

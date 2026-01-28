@@ -9,6 +9,7 @@ import { SessionDetail } from "@/pages/SessionDetail"
 import { Trace } from "@/pages/Trace"
 import { LiveFeed } from "@/pages/LiveFeed"
 import { Runs } from "@/pages/Runs"
+import { RunDetail } from "@/pages/RunDetail"
 import { Config } from "@/pages/Config"
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 
@@ -41,6 +42,7 @@ function App() {
             <Route path="sessions/:agentId/:sessionId/trace" element={<Trace />} />
             <Route path="live" element={<LiveFeed />} />
             <Route path="runs" element={<Runs />} />
+            <Route path="runs/:runId" element={<RunDetail />} />
             <Route path="config" element={<Config />} />
           </Route>
         </Routes>

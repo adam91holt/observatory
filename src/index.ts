@@ -8,6 +8,15 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 export const id = 'observatory';
 
+export const configSchema = {
+  validate: () => ({ ok: true as const }),
+  jsonSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+};
+
 // Resolve the UI dist directory relative to this file
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIST = path.resolve(__dirname, '../ui/dist');
@@ -16,6 +25,7 @@ interface SessionRegistryEntry {
   sessionId: string;
   updatedAt: number;
   systemSent?: boolean;
+  sessionFile?: string;
   [key: string]: any;
 }
 
@@ -24,6 +34,9 @@ interface AgentSessionSummary {
   sessionKey: string;
   sessionId: string;
   updatedAt: number;
+  archived?: boolean;
+  archivedAt?: number;
+  archiveReason?: string;
 }
 
 export function register(api: ClawdbotPluginApi) {
@@ -33,12 +46,35 @@ export function register(api: ClawdbotPluginApi) {
   let statsCache: { stats: any; timestamp: number } | null = null;
   const STATS_CACHE_TTL = 60000; // 60 seconds
 
-  // --- Log Tailing (Live Firehose) --- 
+  // --- Log Tailing (Live Firehose) ---
   const connections = new Set<(line: string) => void>();
   let tail: Tail | null = null;
+  let tailRetry: NodeJS.Timeout | null = null;
+
+  const clearTailRetry = () => {
+    if (!tailRetry) return;
+    clearTimeout(tailRetry);
+    tailRetry = null;
+  };
+
+  const stopTail = () => {
+    clearTailRetry();
+    if (!tail) return;
+    tail.unwatch();
+    tail = null;
+  };
+
+  const scheduleTailRetry = () => {
+    if (tailRetry || connections.size === 0) return;
+    tailRetry = setTimeout(() => {
+      tailRetry = null;
+      setupTail();
+    }, 5000);
+    tailRetry.unref?.();
+  };
 
   const setupTail = () => {
-    if (tail) return;
+    if (tail || connections.size === 0) return;
     let logFile = api.config.logging?.file;
     if (!logFile) {
       const date = new Date().toISOString().split('T')[0];
@@ -46,7 +82,7 @@ export function register(api: ClawdbotPluginApi) {
     }
 
     if (!fs.existsSync(logFile)) {
-      setTimeout(setupTail, 5000);
+      scheduleTailRetry();
       return;
     }
 
@@ -57,10 +93,9 @@ export function register(api: ClawdbotPluginApi) {
     tail.on('error', () => {
       tail?.unwatch();
       tail = null;
-      setTimeout(setupTail, 5000);
+      scheduleTailRetry();
     });
   };
-  setupTail();
 
   // --- Helpers ---
 
@@ -74,6 +109,164 @@ export function register(api: ClawdbotPluginApi) {
 
   const sendError = (res: ServerResponse, message: string, status = 500) => {
     sendJson(res, { error: message }, status);
+  };
+
+  const resolveSessionRoots = (agent: any): string[] => {
+    const roots = new Set<string>();
+    if (agent?.agentDir) {
+      roots.add(path.join(agent.agentDir, 'sessions'));
+    }
+    roots.add(path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions`));
+    if (agent?.workspace) {
+      roots.add(path.join(agent.workspace, 'sessions'));
+    }
+    return [...roots];
+  };
+
+  const parseArchivedTimestamp = (raw: string): number | null => {
+    if (!raw) return null;
+    const normalized = raw.replace(/T(\d{2})-(\d{2})-(\d{2})/, 'T$1:$2:$3');
+    const parsed = Date.parse(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const parseArchivedFile = (fileName: string): { sessionId: string; reason: string; ts?: string } | null => {
+    const match = fileName.match(/^(.+)\.jsonl\.([^.]+)\.(.+)$/);
+    if (!match) return null;
+    return { sessionId: match[1], reason: match[2], ts: match[3] };
+  };
+
+  const listArchivedTranscripts = async (roots: string[]) => {
+    const archivedBySession = new Map<string, {
+      sessionId: string;
+      filePath: string;
+      archivedAt: number;
+      updatedAt: number;
+      reason: string;
+    }>();
+    const seenPaths = new Set<string>();
+
+    for (const root of roots) {
+      let entries: string[] = [];
+      try {
+        entries = await fs.promises.readdir(root);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.includes('.jsonl.')) continue;
+        const parsed = parseArchivedFile(entry);
+        if (!parsed || parsed.reason !== 'deleted') continue;
+        const filePath = path.join(root, entry);
+        if (seenPaths.has(filePath)) continue;
+        let stat: fs.Stats;
+        try {
+          stat = await fs.promises.stat(filePath);
+        } catch {
+          continue;
+        }
+        const parsedTs = parsed.ts ? parseArchivedTimestamp(parsed.ts) : null;
+        const archivedAt = parsedTs ?? stat.mtimeMs;
+        const next = {
+          sessionId: parsed.sessionId,
+          filePath,
+          archivedAt,
+          updatedAt: archivedAt,
+          reason: parsed.reason,
+        };
+        const existing = archivedBySession.get(parsed.sessionId);
+        if (!existing || archivedAt > existing.archivedAt) {
+          archivedBySession.set(parsed.sessionId, next);
+        }
+        seenPaths.add(filePath);
+      }
+    }
+
+    return [...archivedBySession.values()];
+  };
+
+  const loadSessionStoreForAgent = async (agent: any) => {
+    const roots = resolveSessionRoots(agent);
+    for (const root of roots) {
+      const sessionFile = path.join(root, 'sessions.json');
+      try {
+        await fs.promises.access(sessionFile);
+        const content = await fs.promises.readFile(sessionFile, 'utf-8');
+        const sessions = JSON.parse(content);
+        return { storePath: sessionFile, sessions, roots };
+      } catch (e: any) {
+        if (e.code !== 'ENOENT') {
+          api.logger.warn(`[observatory] Failed to read sessions for ${agent.id}: ${e}`);
+        }
+      }
+    }
+    return { storePath: undefined, sessions: null, roots };
+  };
+
+  const resolveTranscriptPath = async (params: {
+    sessionId: string;
+    roots: string[];
+    sessionFile?: string;
+  }) => {
+    const candidates: string[] = [];
+    if (params.sessionFile) candidates.push(params.sessionFile);
+    for (const root of params.roots) {
+      candidates.push(path.join(root, `${params.sessionId}.jsonl`));
+    }
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return { path: candidate, archived: false };
+      }
+    }
+
+    let bestArchived: { path: string; archivedAt: number; reason: string } | null = null;
+    for (const root of params.roots) {
+      let entries: string[] = [];
+      try {
+        entries = await fs.promises.readdir(root);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.startsWith(`${params.sessionId}.jsonl.`)) continue;
+        const parsed = parseArchivedFile(entry);
+        if (!parsed || parsed.reason !== 'deleted') continue;
+        const filePath = path.join(root, entry);
+        let stat: fs.Stats;
+        try {
+          stat = await fs.promises.stat(filePath);
+        } catch {
+          continue;
+        }
+        const parsedTs = parsed.ts ? parseArchivedTimestamp(parsed.ts) : null;
+        const archivedAt = parsedTs ?? stat.mtimeMs;
+        if (!bestArchived || archivedAt > bestArchived.archivedAt) {
+          bestArchived = { path: filePath, archivedAt, reason: parsed.reason };
+        }
+      }
+    }
+
+    if (bestArchived) {
+      return { path: bestArchived.path, archived: true, archivedAt: bestArchived.archivedAt };
+    }
+    return null;
+  };
+
+  const forEachTranscriptEntry = async (
+    filePath: string,
+    onEntry: (entry: any) => void,
+  ) => {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        onEntry(entry);
+      } catch {
+        // Skip invalid lines
+      }
+    }
   };
 
   // --- HTTP Handler ---
@@ -101,8 +294,12 @@ export function register(api: ClawdbotPluginApi) {
       });
       const send = (line: string) => res.write(`data: ${line}\n\n`);
       connections.add(send);
+      setupTail();
       send(JSON.stringify({ type: 'system', message: 'Connected to Observatory API' }));
-      req.on('close', () => connections.delete(send));
+      req.on('close', () => {
+        connections.delete(send);
+        if (connections.size === 0) stopTail();
+      });
       return true;
     }
 
@@ -161,32 +358,36 @@ export function register(api: ClawdbotPluginApi) {
       const allSessions: AgentSessionSummary[] = [];
       
       for (const agent of api.config.agents.list) {
-        // Try multiple locations for session files
-        const sessionPaths = [
-          path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions/sessions.json`),
-          path.join(agent.workspace, 'sessions/sessions.json'),
-        ];
-        
-        for (const sessionFile of sessionPaths) {
-          try {
-            await fs.promises.access(sessionFile);
-            const content = await fs.promises.readFile(sessionFile, 'utf-8');
-            const sessions = JSON.parse(content);
-            for (const [key, data] of Object.entries(sessions)) {
-              const sessionData = data as SessionRegistryEntry;
-              allSessions.push({
-                agentId: agent.id,
-                sessionKey: key,
-                sessionId: sessionData.sessionId,
-                updatedAt: sessionData.updatedAt
-              });
-            }
-            break; // Found sessions, don't check other paths
-          } catch (e: any) {
-            if (e.code !== 'ENOENT') {
-              api.logger.warn(`[observatory] Failed to read sessions for ${agent.id}: ${e}`);
+        const { sessions, roots } = await loadSessionStoreForAgent(agent);
+        const activeSessionIds = new Set<string>();
+
+        if (sessions) {
+          for (const [key, data] of Object.entries(sessions)) {
+            const sessionData = data as SessionRegistryEntry;
+            allSessions.push({
+              agentId: agent.id,
+              sessionKey: key,
+              sessionId: sessionData.sessionId,
+              updatedAt: sessionData.updatedAt,
+            });
+            if (sessionData.sessionId) {
+              activeSessionIds.add(sessionData.sessionId);
             }
           }
+        }
+
+        const archived = await listArchivedTranscripts(roots);
+        for (const entry of archived) {
+          if (activeSessionIds.has(entry.sessionId)) continue;
+          allSessions.push({
+            agentId: agent.id,
+            sessionKey: `agent:${agent.id}:archived:${entry.sessionId}`,
+            sessionId: entry.sessionId,
+            updatedAt: entry.updatedAt,
+            archived: true,
+            archivedAt: entry.archivedAt,
+            archiveReason: entry.reason,
+          });
         }
       }
       
@@ -197,52 +398,90 @@ export function register(api: ClawdbotPluginApi) {
     }
 
     // 4. GET /observatory/api/transcript?agentId=...&sessionId=...
+    // Also supports: ?sessionKey=agent:scout:subagent:uuid (looks up actual sessionId from registry)
     // Get full chat history for a specific session
     if (url.pathname === '/observatory/api/transcript') {
-      const agentId = url.searchParams.get('agentId');
-      const sessionId = url.searchParams.get('sessionId');
+      let agentId = url.searchParams.get('agentId');
+      let sessionId = url.searchParams.get('sessionId');
+      const sessionKey = url.searchParams.get('sessionKey');
+
+      // If sessionKey provided, parse it and look up actual sessionId
+      if (sessionKey) {
+        const keyMatch = sessionKey.match(/^agent:([^:]+):/);
+        if (keyMatch) {
+          agentId = keyMatch[1];
+        }
+      }
+
+      if (!agentId) {
+        sendError(res, 'Missing agentId', 400);
+        return true;
+      }
+
+      const agent = api.config.agents?.list?.find(a => a.id === agentId);
+      if (!agent) {
+        sendError(res, 'Agent not found', 404);
+        return true;
+      }
+
+      const { sessions, roots } = await loadSessionStoreForAgent(agent);
+      let sessionFile: string | undefined;
+
+      if (sessionKey && sessions && sessions[sessionKey]) {
+        const entry = sessions[sessionKey] as SessionRegistryEntry;
+        if (entry.sessionId) sessionId = entry.sessionId;
+        if (entry.sessionFile) sessionFile = entry.sessionFile;
+      }
+
+      if (!sessionId && sessionKey?.includes(':archived:')) {
+        const fallback = sessionKey.split(':').pop();
+        if (fallback) sessionId = fallback;
+      }
+
+      if (!sessionId && sessionKey) {
+        const uuidMatch = sessionKey.match(/([a-f0-9-]{36})$/);
+        if (uuidMatch) {
+          sessionId = uuidMatch[1];
+        }
+      }
 
       if (!agentId || !sessionId) {
         sendError(res, 'Missing agentId or sessionId', 400);
         return true;
       }
 
-      const agent = api.config.agents.list.find(a => a.id === agentId);
-      if (!agent) {
-        sendError(res, 'Agent not found', 404);
-        return true;
-      }
-
-      // Try multiple locations for transcript files
-      const transcriptPaths = [
-        path.join(os.homedir(), `.clawdbot/agents/${agentId}/sessions/${sessionId}.jsonl`),
-        path.join(agent.workspace, `sessions/${sessionId}.jsonl`),
-      ];
-      
-      let found = false;
-      for (const transcriptPath of transcriptPaths) {
-        try {
-          await fs.promises.access(transcriptPath);
-          const content = await fs.promises.readFile(transcriptPath, 'utf-8');
-          const messages = content.trim().split('\n')
-            .map(line => {
-              try { return JSON.parse(line); } catch (e) { return null; }
-            })
-            .filter(Boolean);
-          
-          sendJson(res, { messages });
-          found = true;
-          break;
-        } catch (e: any) {
-          if (e.code !== 'ENOENT') {
-            sendError(res, `Failed to read transcript: ${e.message}`);
-            return true;
+      if (!sessionFile && sessions) {
+        for (const entry of Object.values(sessions)) {
+          const data = entry as SessionRegistryEntry;
+          if (data.sessionId === sessionId && data.sessionFile) {
+            sessionFile = data.sessionFile;
+            break;
           }
         }
       }
-      
-      if (!found) {
+
+      const resolved = await resolveTranscriptPath({
+        sessionId,
+        roots,
+        sessionFile,
+      });
+
+      if (!resolved) {
         sendError(res, 'Transcript not found', 404);
+        return true;
+      }
+
+      try {
+        const content = await fs.promises.readFile(resolved.path, 'utf-8');
+        const messages = content.trim().split('\n')
+          .map(line => {
+            try { return JSON.parse(line); } catch (e) { return null; }
+          })
+          .filter(Boolean);
+
+        sendJson(res, { messages });
+      } catch (e: any) {
+        sendError(res, `Failed to read transcript: ${e.message}`);
       }
       return true;
     }
@@ -254,7 +493,25 @@ export function register(api: ClawdbotPluginApi) {
       try {
         const content = await fs.promises.readFile(runsPath, 'utf-8');
         const data = JSON.parse(content);
-        sendJson(res, data);
+
+        // Transform backend fields to match UI expectations
+        const transformedRuns: Record<string, any> = {};
+        for (const [runId, run] of Object.entries(data.runs || {})) {
+          const r = run as any;
+          transformedRuns[runId] = {
+            ...r,
+            // Map endedAt -> completedAt
+            completedAt: r.endedAt || r.completedAt,
+            // Transform outcome.status to outcome.success
+            outcome: r.outcome ? {
+              success: r.outcome.status === 'ok',
+              error: r.outcome.error,
+              result: r.outcome.result,
+            } : undefined,
+          };
+        }
+
+        sendJson(res, { runs: transformedRuns });
       } catch (e: any) {
         if (e.code === 'ENOENT') {
           // Return empty structure if file doesn't exist yet
@@ -304,92 +561,112 @@ export function register(api: ClawdbotPluginApi) {
           tokens: 0,
         };
 
-        // Count sessions
-        const sessionPaths = [
-          path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions/sessions.json`),
-          path.join(agent.workspace, 'sessions/sessions.json'),
-        ];
+        const { sessions, roots } = await loadSessionStoreForAgent(agent);
+        const activeSessionIds = new Set<string>();
 
-        for (const sessionFile of sessionPaths) {
-          try {
-            await fs.promises.access(sessionFile);
-            const content = await fs.promises.readFile(sessionFile, 'utf-8');
-            const sessions = JSON.parse(content);
-            const sessionCount = Object.keys(sessions).length;
-            agentStats.sessions = sessionCount;
-            stats.totalSessions += sessionCount;
+        if (sessions) {
+          const sessionCount = Object.keys(sessions).length;
+          agentStats.sessions += sessionCount;
+          stats.totalSessions += sessionCount;
 
-            // Process each session's transcript for costs
-            for (const [, sessionData] of Object.entries(sessions)) {
-              const data = sessionData as SessionRegistryEntry;
-              
-              // Try to read the transcript
-              const transcriptPaths = [
-                path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions/${data.sessionId}.jsonl`),
-                path.join(agent.workspace, `sessions/${data.sessionId}.jsonl`),
-              ];
+          for (const [, sessionData] of Object.entries(sessions)) {
+            const data = sessionData as SessionRegistryEntry;
+            if (data.sessionId) activeSessionIds.add(data.sessionId);
 
-              for (const transcriptPath of transcriptPaths) {
-                try {
-                  await fs.promises.access(transcriptPath);
-                  const transcriptContent = await fs.promises.readFile(transcriptPath, 'utf-8');
-                  const lines = transcriptContent.trim().split('\n');
-                  
-                  for (const line of lines) {
-                    try {
-                      const entry = JSON.parse(line);
-                      if (entry.type === 'message' && entry.message) {
-                        agentStats.messages++;
-                        stats.totalMessages++;
-                        
-                        const msg = entry.message;
-                        const timestamp = entry.timestamp || 0;
-                        
-                        // Count tokens
-                        if (msg.api === 'anthropic-messages' && msg.usage) {
-                          const inputTokens = msg.usage.input || 0;
-                          const outputTokens = msg.usage.output || 0;
-                          const cacheRead = msg.usage.cacheRead || 0;
-                          const cacheWrite = msg.usage.cacheWrite || 0;
-                          
-                          stats.totalInputTokens += inputTokens;
-                          stats.totalOutputTokens += outputTokens;
-                          stats.cacheReadTokens += cacheRead;
-                          stats.cacheWriteTokens += cacheWrite;
-                          agentStats.tokens += inputTokens + outputTokens;
-                          stats.totalTokens += inputTokens + outputTokens;
-                        }
-                        
-                        // Count costs
-                        if (msg.usage?.cost?.total) {
-                          const cost = msg.usage.cost.total;
-                          agentStats.cost += cost;
-                          stats.totalCost += cost;
-                          
-                          if (timestamp > oneDayAgo) {
-                            stats.recentCost24h += cost;
-                            stats.recentMessages24h++;
-                          }
-                        }
-                      }
-                    } catch (e) {
-                      // Skip invalid lines
+            const resolved = await resolveTranscriptPath({
+              sessionId: data.sessionId,
+              roots,
+              sessionFile: data.sessionFile,
+            });
+            if (!resolved) continue;
+
+            try {
+              await forEachTranscriptEntry(resolved.path, (entry) => {
+                if (entry.type === 'message' && entry.message) {
+                  agentStats.messages++;
+                  stats.totalMessages++;
+
+                  const msg = entry.message;
+                  const timestamp = entry.timestamp || 0;
+
+                  // Count tokens
+                  if (msg.api === 'anthropic-messages' && msg.usage) {
+                    const inputTokens = msg.usage.input || 0;
+                    const outputTokens = msg.usage.output || 0;
+                    const cacheRead = msg.usage.cacheRead || 0;
+                    const cacheWrite = msg.usage.cacheWrite || 0;
+
+                    stats.totalInputTokens += inputTokens;
+                    stats.totalOutputTokens += outputTokens;
+                    stats.cacheReadTokens += cacheRead;
+                    stats.cacheWriteTokens += cacheWrite;
+                    agentStats.tokens += inputTokens + outputTokens;
+                    stats.totalTokens += inputTokens + outputTokens;
+                  }
+
+                  // Count costs
+                  if (msg.usage?.cost?.total) {
+                    const cost = msg.usage.cost.total;
+                    agentStats.cost += cost;
+                    stats.totalCost += cost;
+
+                    if (timestamp > oneDayAgo) {
+                      stats.recentCost24h += cost;
+                      stats.recentMessages24h++;
                     }
                   }
-                  
-                  break;
-                } catch (e: any) {
-                  if (e.code !== 'ENOENT') {
-                    // Log error but continue
+                }
+              });
+            } catch {
+              // Ignore transcript read errors
+            }
+          }
+        }
+
+        const archived = await listArchivedTranscripts(roots);
+        const archivedToInclude = archived.filter((entry) => !activeSessionIds.has(entry.sessionId));
+        if (archivedToInclude.length > 0) {
+          agentStats.sessions += archivedToInclude.length;
+          stats.totalSessions += archivedToInclude.length;
+
+          for (const entry of archivedToInclude) {
+            try {
+              await forEachTranscriptEntry(entry.filePath, (lineEntry) => {
+                if (lineEntry.type === 'message' && lineEntry.message) {
+                  agentStats.messages++;
+                  stats.totalMessages++;
+
+                  const msg = lineEntry.message;
+                  const timestamp = lineEntry.timestamp || 0;
+
+                  if (msg.api === 'anthropic-messages' && msg.usage) {
+                    const inputTokens = msg.usage.input || 0;
+                    const outputTokens = msg.usage.output || 0;
+                    const cacheRead = msg.usage.cacheRead || 0;
+                    const cacheWrite = msg.usage.cacheWrite || 0;
+
+                    stats.totalInputTokens += inputTokens;
+                    stats.totalOutputTokens += outputTokens;
+                    stats.cacheReadTokens += cacheRead;
+                    stats.cacheWriteTokens += cacheWrite;
+                    agentStats.tokens += inputTokens + outputTokens;
+                    stats.totalTokens += inputTokens + outputTokens;
+                  }
+
+                  if (msg.usage?.cost?.total) {
+                    const cost = msg.usage.cost.total;
+                    agentStats.cost += cost;
+                    stats.totalCost += cost;
+
+                    if (timestamp > oneDayAgo) {
+                      stats.recentCost24h += cost;
+                      stats.recentMessages24h++;
+                    }
                   }
                 }
-              }
-            }
-            
-            break;
-          } catch (e: any) {
-            if (e.code !== 'ENOENT') {
-              // Continue to next path
+              });
+            } catch {
+              // Ignore transcript read errors
             }
           }
         }
@@ -451,125 +728,178 @@ export function register(api: ClawdbotPluginApi) {
           tokens: 0,
         };
 
-        const sessionPaths = [
-          path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions/sessions.json`),
-          path.join(agent.workspace, 'sessions/sessions.json'),
-        ];
+        const { sessions, roots } = await loadSessionStoreForAgent(agent);
+        const activeSessionIds = new Set<string>();
 
-        for (const sessionFile of sessionPaths) {
-          try {
-            await fs.promises.access(sessionFile);
-            const content = await fs.promises.readFile(sessionFile, 'utf-8');
-            const sessions = JSON.parse(content);
+        if (sessions) {
+          for (const [, sessionData] of Object.entries(sessions)) {
+            const data = sessionData as SessionRegistryEntry;
+            if (data.sessionId) activeSessionIds.add(data.sessionId);
 
-            for (const [, sessionData] of Object.entries(sessions)) {
-              const data = sessionData as SessionRegistryEntry;
-              
-              const transcriptPaths = [
-                path.join(os.homedir(), `.clawdbot/agents/${agent.id}/sessions/${data.sessionId}.jsonl`),
-                path.join(agent.workspace, `sessions/${data.sessionId}.jsonl`),
-              ];
+            const resolved = await resolveTranscriptPath({
+              sessionId: data.sessionId,
+              roots,
+              sessionFile: data.sessionFile,
+            });
+            if (!resolved) continue;
 
-              for (const transcriptPath of transcriptPaths) {
-                try {
-                  await fs.promises.access(transcriptPath);
-                  const transcriptContent = await fs.promises.readFile(transcriptPath, 'utf-8');
-                  const lines = transcriptContent.trim().split('\n');
-                  
-                  let messageCount = 0;
-                  for (const line of lines) {
-                    try {
-                      const entry = JSON.parse(line);
-                      if (entry.type === 'message' && entry.message) {
-                        const timestamp = entry.timestamp || 0;
-                        
-                        // Apply time range filter
-                        if (rangeMs > 0 && timestamp < now - rangeMs) {
-                          continue;
+            let messageCount = 0;
+            try {
+              await forEachTranscriptEntry(resolved.path, (entry) => {
+                if (entry.type === 'message' && entry.message) {
+                  const timestamp = entry.timestamp || 0;
+
+                  // Apply time range filter
+                  if (rangeMs > 0 && timestamp < now - rangeMs) {
+                    return;
+                  }
+
+                  messageCount++;
+                  agentStats.messages++;
+                  baseStats.totalMessages++;
+
+                  const m = entry.message;
+
+                  // Cost tracking
+                  if (m.usage?.cost?.total) {
+                    const cost = m.usage.cost.total;
+                    agentStats.cost += cost;
+                    baseStats.totalCost += cost;
+                    const model = m.model || 'unknown';
+                    metricsData.costByModel[model] = (metricsData.costByModel[model] || 0) + cost;
+                  }
+
+                  // Token tracking
+                  if (m.usage) {
+                    const inputTokens = m.usage.input || 0;
+                    const outputTokens = m.usage.output || 0;
+                    const tokens = inputTokens + outputTokens;
+
+                    agentStats.tokens += tokens;
+                    baseStats.totalTokens += tokens;
+                    baseStats.totalInputTokens += inputTokens;
+                    baseStats.totalOutputTokens += outputTokens;
+
+                    const model = m.model || 'unknown';
+                    metricsData.tokensByModel[model] = (metricsData.tokensByModel[model] || 0) + tokens;
+
+                    // Cache stats
+                    const cacheRead = m.usage.cacheRead || 0;
+                    const cacheWrite = m.usage.cacheWrite || 0;
+                    baseStats.cacheReadTokens += cacheRead;
+                    baseStats.cacheWriteTokens += cacheWrite;
+                  }
+
+                  // Tool usage tracking
+                  if (m.content && Array.isArray(m.content)) {
+                    for (const item of m.content) {
+                      if (item.type === 'toolCall') {
+                        const toolName = item.name || 'unknown';
+                        metricsData.toolUsage[toolName] = (metricsData.toolUsage[toolName] || 0) + 1;
+
+                        if (!toolCalls[toolName]) {
+                          toolCalls[toolName] = { success: 0, total: 0 };
                         }
-
-                        messageCount++;
-                        agentStats.messages++;
-                        baseStats.totalMessages++;
-
-                        const m = entry.message;
-                        
-                        // Cost tracking
-                        if (m.usage?.cost?.total) {
-                          const cost = m.usage.cost.total;
-                          agentStats.cost += cost;
-                          baseStats.totalCost += cost;
-                          const model = m.model || 'unknown';
-                          metricsData.costByModel[model] = (metricsData.costByModel[model] || 0) + cost;
-                        }
-
-                        // Token tracking
-                        if (m.usage) {
-                          const inputTokens = m.usage.input || 0;
-                          const outputTokens = m.usage.output || 0;
-                          const tokens = inputTokens + outputTokens;
-                          
-                          agentStats.tokens += tokens;
-                          baseStats.totalTokens += tokens;
-                          baseStats.totalInputTokens += inputTokens;
-                          baseStats.totalOutputTokens += outputTokens;
-
-                          const model = m.model || 'unknown';
-                          metricsData.tokensByModel[model] = (metricsData.tokensByModel[model] || 0) + tokens;
-
-                          // Cache stats
-                          const cacheRead = m.usage.cacheRead || 0;
-                          const cacheWrite = m.usage.cacheWrite || 0;
-                          baseStats.cacheReadTokens += cacheRead;
-                          baseStats.cacheWriteTokens += cacheWrite;
-                        }
-
-                        // Tool usage tracking
-                        if (m.content && Array.isArray(m.content)) {
-                          for (const item of m.content) {
-                            if (item.type === 'toolCall') {
-                              const toolName = item.name || 'unknown';
-                              metricsData.toolUsage[toolName] = (metricsData.toolUsage[toolName] || 0) + 1;
-                              
-                              if (!toolCalls[toolName]) {
-                                toolCalls[toolName] = { success: 0, total: 0 };
-                              }
-                              toolCalls[toolName].total++;
-                            }
-                          }
-                        }
-
-                        // Time distribution
-                        if (timestamp > 0) {
-                          const dt = new Date(timestamp);
-                          const hourKey = dt.toISOString().split('T')[0] + ' ' + dt.getHours().toString().padStart(2, '0') + ':00';
-                          metricsData.sessionsPerHour[hourKey] = (metricsData.sessionsPerHour[hourKey] || 0) + 1;
-                        }
+                        toolCalls[toolName].total++;
                       }
-                    } catch (e) {
-                      // Skip invalid lines
                     }
                   }
 
-                  if (messageCount > 0) {
-                    agentStats.sessions++;
-                    baseStats.totalSessions++;
-                    sessionLengths.push(messageCount);
-                  }
-                  
-                  break;
-                } catch (e: any) {
-                  if (e.code !== 'ENOENT') {
-                    // Continue
+                  // Time distribution
+                  if (timestamp > 0) {
+                    const dt = new Date(timestamp);
+                    const hourKey = dt.toISOString().split('T')[0] + ' ' + dt.getHours().toString().padStart(2, '0') + ':00';
+                    metricsData.sessionsPerHour[hourKey] = (metricsData.sessionsPerHour[hourKey] || 0) + 1;
                   }
                 }
+              });
+            } catch {
+              // Ignore transcript errors
+            }
+
+            if (messageCount > 0) {
+              agentStats.sessions++;
+              baseStats.totalSessions++;
+              sessionLengths.push(messageCount);
+            }
+          }
+        }
+
+        const archived = await listArchivedTranscripts(roots);
+        const archivedToInclude = archived.filter((entry) => !activeSessionIds.has(entry.sessionId));
+        for (const entry of archivedToInclude) {
+          let messageCount = 0;
+          try {
+            await forEachTranscriptEntry(entry.filePath, (lineEntry) => {
+              if (lineEntry.type === 'message' && lineEntry.message) {
+                const timestamp = lineEntry.timestamp || 0;
+
+                if (rangeMs > 0 && timestamp < now - rangeMs) {
+                  return;
+                }
+
+                messageCount++;
+                agentStats.messages++;
+                baseStats.totalMessages++;
+
+                const m = lineEntry.message;
+
+                if (m.usage?.cost?.total) {
+                  const cost = m.usage.cost.total;
+                  agentStats.cost += cost;
+                  baseStats.totalCost += cost;
+                  const model = m.model || 'unknown';
+                  metricsData.costByModel[model] = (metricsData.costByModel[model] || 0) + cost;
+                }
+
+                if (m.usage) {
+                  const inputTokens = m.usage.input || 0;
+                  const outputTokens = m.usage.output || 0;
+                  const tokens = inputTokens + outputTokens;
+
+                  agentStats.tokens += tokens;
+                  baseStats.totalTokens += tokens;
+                  baseStats.totalInputTokens += inputTokens;
+                  baseStats.totalOutputTokens += outputTokens;
+
+                  const model = m.model || 'unknown';
+                  metricsData.tokensByModel[model] = (metricsData.tokensByModel[model] || 0) + tokens;
+
+                  const cacheRead = m.usage.cacheRead || 0;
+                  const cacheWrite = m.usage.cacheWrite || 0;
+                  baseStats.cacheReadTokens += cacheRead;
+                  baseStats.cacheWriteTokens += cacheWrite;
+                }
+
+                if (m.content && Array.isArray(m.content)) {
+                  for (const item of m.content) {
+                    if (item.type === 'toolCall') {
+                      const toolName = item.name || 'unknown';
+                      metricsData.toolUsage[toolName] = (metricsData.toolUsage[toolName] || 0) + 1;
+
+                      if (!toolCalls[toolName]) {
+                        toolCalls[toolName] = { success: 0, total: 0 };
+                      }
+                      toolCalls[toolName].total++;
+                    }
+                  }
+                }
+
+                if (timestamp > 0) {
+                  const dt = new Date(timestamp);
+                  const hourKey = dt.toISOString().split('T')[0] + ' ' + dt.getHours().toString().padStart(2, '0') + ':00';
+                  metricsData.sessionsPerHour[hourKey] = (metricsData.sessionsPerHour[hourKey] || 0) + 1;
+                }
               }
-            }
-            break;
-          } catch (e: any) {
-            if (e.code !== 'ENOENT') {
-              // Continue
-            }
+            });
+          } catch {
+            // Ignore transcript errors
+          }
+
+          if (messageCount > 0) {
+            agentStats.sessions++;
+            baseStats.totalSessions++;
+            sessionLengths.push(messageCount);
           }
         }
 

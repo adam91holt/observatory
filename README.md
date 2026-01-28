@@ -13,47 +13,23 @@
 
 ## Installation
 
-### 1. Install the plugin
+### 1. Build the UI
 
 ```bash
-# GitHub Packages (private)
-cat <<'EOF' > ~/.npmrc
-@adam91holt:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_TOKEN
-EOF
-
-clawdbot plugins install @adam91holt/observatory
-```
-
-For local development instead:
-
-```bash
-clawdbot plugins install /path/to/observatory
+cd extensions/observatory/ui
+pnpm install
+pnpm run build
 ```
 
 ### 2. Configure Clawdbot
 
-If you installed from a package, you only need to enable it:
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "observatory": {
-        "enabled": true
-      }
-    }
-  }
-}
-```
-
-If you installed from a local path, add `load.paths` pointing at the folder that contains the plugin `package.json`:
+Ensure your `~/.clawdbot/clawdbot.json` includes the extension path and enables it:
 
 ```json
 {
   "plugins": {
     "load": {
-      "paths": ["/path/to/observatory"]
+      "paths": ["/path/to/clawdbot/extensions/observatory"]
     },
     "entries": {
       "observatory": {
@@ -64,15 +40,7 @@ If you installed from a local path, add `load.paths` pointing at the folder that
 }
 ```
 
-### 3. Build the UI (local dev)
-
-```bash
-cd ui
-pnpm install
-pnpm run build
-```
-
-### 4. Restart Clawdbot
+### 3. Restart Clawdbot
 
 Restart your Clawdbot gateway/daemon to load the extension.
 
@@ -85,7 +53,7 @@ Navigate to **`http://localhost:18789/observatory/`** in your browser.
 For local development with hot reload:
 
 ```bash
-cd ui
+cd extensions/observatory/ui
 pnpm run dev
 ```
 

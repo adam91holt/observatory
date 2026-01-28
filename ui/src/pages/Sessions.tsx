@@ -132,6 +132,7 @@ export function Sessions() {
                   {dateSessions.map((session) => {
                     const parsed = parseSessionKey(session.sessionKey)
                     const isRecent =
+                      !session.archived &&
                       Date.now() - session.updatedAt < 5 * 60 * 1000
 
                     return (
@@ -139,7 +140,8 @@ export function Sessions() {
                         key={session.sessionId}
                         className={cn(
                           "cursor-pointer transition-all hover:shadow-md hover:border-primary/30",
-                          isRecent && "border-l-4 border-l-green-500 bg-green-500/5"
+                          isRecent && "border-l-4 border-l-green-500 bg-green-500/5",
+                          session.archived && "border-dashed bg-muted/30"
                         )}
                         onClick={() =>
                           openSession(session.agentId, session.sessionId)
@@ -160,7 +162,12 @@ export function Sessions() {
                                     subagent
                                   </Badge>
                                 )}
-                                {parsed.channel && (
+                                {session.archived && (
+                                  <Badge variant="outline" className="text-xs">
+                                    archived
+                                  </Badge>
+                                )}
+                                {!session.archived && parsed.channel && (
                                   <Badge variant="secondary" className="text-xs">
                                     {parsed.channel}
                                   </Badge>

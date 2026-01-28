@@ -311,7 +311,7 @@ export function Dashboard() {
                     <Link
                       key={session.sessionId}
                       to={`/sessions/${session.agentId}/${session.sessionId}`}
-                      className="flex items-center justify-between rounded-lg border p-3 text-sm hover:bg-muted/50 hover:border-primary/30 transition-all hover:shadow-sm"
+                      className={`flex items-center justify-between rounded-lg border p-3 text-sm hover:bg-muted/50 hover:border-primary/30 transition-all hover:shadow-sm ${session.archived ? "border-dashed bg-muted/30" : ""}`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-xl flex-shrink-0">{getAgentEmoji(session.agentId)}</span>
@@ -323,6 +323,11 @@ export function Dashboard() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0 text-xs text-muted-foreground">
+                        {session.archived && (
+                          <Badge variant="outline" className="text-[10px] h-4 px-1">
+                            archived
+                          </Badge>
+                        )}
                         <Clock className="h-3 w-3" />
                         <span className="font-mono">
                           {formatDistanceToNow(new Date(session.updatedAt), {

@@ -39,6 +39,9 @@ export interface Session {
   sessionKey: string
   sessionId: string
   updatedAt: number
+  archived?: boolean
+  archivedAt?: number
+  archiveReason?: string
 }
 
 // Message types
@@ -92,6 +95,10 @@ export interface SubAgentRun {
   }
   startedAt?: number
   completedAt?: number
+  requesterOrigin?: {
+    channel?: string
+    accountId?: string
+  }
 }
 
 export interface RunsResponse {

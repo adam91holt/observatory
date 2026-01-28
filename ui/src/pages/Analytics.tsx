@@ -51,9 +51,10 @@ export function Analytics() {
   if (!metrics) return <div className="p-6">No data available</div>
 
   const stats = metrics.stats
-  const cacheHitRatio = (stats.cacheReadTokens / (stats.cacheReadTokens + stats.cacheWriteTokens) * 100).toFixed(1)
-  const avgCostPerSession = (stats.totalCost / stats.totalSessions).toFixed(4)
-  const avgTokensPerMessage = (stats.totalTokens / stats.totalMessages).toFixed(0)
+  const totalCache = stats.cacheReadTokens + stats.cacheWriteTokens
+  const cacheHitRatio = totalCache > 0 ? ((stats.cacheReadTokens / totalCache) * 100).toFixed(1) : "0.0"
+  const avgCostPerSession = stats.totalSessions > 0 ? (stats.totalCost / stats.totalSessions).toFixed(4) : "0.0000"
+  const avgTokensPerMessage = stats.totalMessages > 0 ? (stats.totalTokens / stats.totalMessages).toFixed(0) : "0"
 
   // Sort agents by cost
   const agentsByEntity = Object.entries(stats.byAgent)
@@ -80,8 +81,8 @@ export function Analytics() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
               label="Total Cost"
-              value={`$${stats.totalCost.toFixed(3)}`}
-              change={`+$${stats.recentCost24h.toFixed(3)} (24h)`}
+              value={`$${(stats.totalCost || 0).toFixed(3)}`}
+              change={`+$${(stats.recentCost24h || 0).toFixed(3)} (24h)`}
               trend="up"
             />
             <MetricCard
@@ -117,15 +118,15 @@ export function Analytics() {
                         <div
                           className="bg-blue-500 h-2 rounded-full"
                           style={{
-                            width: `${(data.cost / stats.totalCost) * 100}%`,
+                            width: `${stats.totalCost > 0 ? (data.cost / stats.totalCost) * 100 : 0}%`,
                           }}
                         />
                       </div>
                     </div>
                     <div className="text-right ml-4">
-                      <div className="text-sm font-medium">${data.cost.toFixed(3)}</div>
+                      <div className="text-sm font-medium">${(data.cost || 0).toFixed(3)}</div>
                       <div className="text-xs text-gray-500">
-                        {((data.cost / stats.totalCost) * 100).toFixed(1)}%
+                        {stats.totalCost > 0 ? ((data.cost / stats.totalCost) * 100).toFixed(1) : "0.0"}%
                       </div>
                     </div>
                   </div>
@@ -147,15 +148,15 @@ export function Analytics() {
                             <div
                               className="bg-green-500 h-2 rounded-full"
                               style={{
-                                width: `${(cost / stats.totalCost) * 100}%`,
+                                width: `${stats.totalCost > 0 ? (cost / stats.totalCost) * 100 : 0}%`,
                               }}
                             />
                           </div>
                         </div>
                         <div className="text-right ml-4">
-                          <div className="text-sm font-medium">${cost.toFixed(3)}</div>
+                          <div className="text-sm font-medium">${(cost || 0).toFixed(3)}</div>
                           <div className="text-xs text-gray-500">
-                            {((cost / stats.totalCost) * 100).toFixed(1)}%
+                            {stats.totalCost > 0 ? ((cost / stats.totalCost) * 100).toFixed(1) : "0.0"}%
                           </div>
                         </div>
                       </div>
