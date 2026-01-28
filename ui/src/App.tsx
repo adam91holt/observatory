@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Layout } from "@/components/layout/Layout"
 import { Dashboard } from "@/pages/Dashboard"
@@ -43,6 +43,7 @@ function App() {
             <Route path="live" element={<LiveFeed />} />
             <Route path="runs" element={<Runs />} />
             <Route path="runs/:runId" element={<RunDetail />} />
+            <Route path="events" element={<Navigate to="/" replace />} />
             <Route path="config" element={<Config />} />
           </Route>
         </Routes>

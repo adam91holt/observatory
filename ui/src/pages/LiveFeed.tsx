@@ -1,7 +1,7 @@
 import { useMemo, useState, useRef, useCallback, Fragment } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { format, formatDistanceToNow } from "date-fns"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Link } from "react-router-dom"
 import {
   Play,
   Pause,
@@ -893,9 +893,9 @@ export function LiveFeed() {
   return (
     <div className="h-full flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4 shrink-0">
-        <div>
+        <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">Live Feed</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Logs</h1>
             <div className={cn(
               "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
               isConnected
@@ -909,7 +909,15 @@ export function LiveFeed() {
               {isConnected ? "Connected" : "Disconnected"}
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">Real-time log stream</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Real-time event stream for debugging and inspection</p>
+          <div className="mt-3 p-3 border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-900/20 rounded-r">
+            <p className="text-sm">
+              This is a raw event stream for debugging. For operational metrics and overview, see the{" "}
+              <Link to="/" className="underline font-medium hover:text-blue-700 dark:hover:text-blue-300">
+                Dashboard
+              </Link>.
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant={isPaused ? "default" : "outline"} size="sm" onClick={togglePause} className="gap-1.5">

@@ -16,7 +16,7 @@ const navItems = [
   { to: "/analytics", icon: TrendingUp, label: "Analytics" },
   { to: "/channels", icon: MessagesSquare, label: "Channels" },
   { to: "/sessions", icon: Users, label: "Sessions" },
-  { to: "/live", icon: Radio, label: "Live Feed" },
+  { to: "/live", icon: Radio, label: "Logs" },
   { to: "/runs", icon: GitBranch, label: "Sub-Agent Runs" },
   { to: "/config", icon: Settings, label: "Config" },
 ]

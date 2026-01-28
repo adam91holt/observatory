@@ -10,6 +10,7 @@ import {
   TrendingUp,
   Clock,
   Database,
+  ChevronDown,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -17,8 +18,16 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getAgents, getSessions, getChannels, getStats } from "@/api/observatory"
 import { getAgentEmoji, getChannelIcon, formatCost, formatTokens } from "@/lib/utils"
+import { LiveMetricsCards } from "@/components/metrics/LiveMetricsCards"
+import { RecentErrorsList } from "@/components/metrics/RecentErrorsList"
+import { ToolPerformanceTable } from "@/components/metrics/ToolPerformanceTable"
+import { useLiveMetrics } from "@/hooks/useLiveMetrics"
+import { useState } from "react"
+import { cn } from "@/lib/utils"
 
 export function Dashboard() {
+  const [liveMetricsOpen, setLiveMetricsOpen] = useState(true)
+
   const { data: agentsData, isLoading: agentsLoading } = useQuery({
     queryKey: ["agents"],
     queryFn: getAgents,
@@ -41,14 +50,15 @@ export function Dashboard() {
     refetchInterval: 30000, // Refresh every 30s
   })
 
+  const { metrics, toolUsage, errors, isLoading: liveLoading } = useLiveMetrics()
+
   const agents = agentsData?.agents || []
   const sessions = sessionsData?.sessions || []
   const stats = statsData?.stats
   const recentSessions = sessions.slice(0, 10)
 
-  // Count active sessions (updated in last 5 minutes)
-  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000
-  const activeSessions = sessions.filter((s) => s.updatedAt > fiveMinutesAgo).length
+  // Use live metrics for active sessions if available, otherwise fall back to 5-minute calculation
+  const activeSessions = metrics?.activeSessions ?? sessions.filter((s) => s.updatedAt > (Date.now() - 5 * 60 * 1000)).length
 
   // Count channels
   const channelCounts = Object.entries(channelsData?.channels || {}).reduce(
@@ -166,9 +176,37 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* Error Alert Banner */}
-      {/* TODO: Add real error detection from logs/sessions */}
-      
+      {/* Live Metrics Section */}
+      <Card>
+        <div
+          className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors"
+          onClick={() => setLiveMetricsOpen(!liveMetricsOpen)}
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Live Metrics</h2>
+            <Badge variant="outline" className="text-xs">
+              <Activity className="h-3 w-3 mr-1" />
+              5s refresh
+            </Badge>
+          </div>
+          <ChevronDown className={cn(
+            "h-5 w-5 text-muted-foreground transition-transform",
+            liveMetricsOpen && "rotate-180"
+          )} />
+        </div>
+        {liveMetricsOpen && (
+          <CardContent className="pt-0 pb-4">
+            {liveLoading || !metrics ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-32" />)}
+              </div>
+            ) : (
+              <LiveMetricsCards {...metrics} />
+            )}
+          </CardContent>
+        )}
+      </Card>
+
       {/* Recent Activity Stats */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -229,6 +267,19 @@ export function Dashboard() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Monitoring Row */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Tool Performance */}
+        {toolUsage.length > 0 && (
+          <ToolPerformanceTable tools={toolUsage} limit={5} />
+        )}
+
+        {/* Recent Errors */}
+        {errors.length > 0 && (
+          <RecentErrorsList errors={errors} limit={5} />
+        )}
       </div>
 
       {/* Main Content */}
