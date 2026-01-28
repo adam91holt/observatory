@@ -39,6 +39,8 @@ export interface Session {
   sessionKey: string
   sessionId: string
   updatedAt: number
+  displayName?: string
+  chatType?: string
   archived?: boolean
   archivedAt?: number
   archiveReason?: string

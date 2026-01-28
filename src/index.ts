@@ -1,10 +1,17 @@
-import type { ClawdbotPluginApi, ClawdbotPluginHttpHandler } from 'clawdbot/plugin-sdk';
+import type { MoltbotPluginApi, MoltbotPluginHttpHandler } from 'clawdbot/plugin-sdk';
 import { Tail } from 'tail';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { onDiagnosticEvent } from 'clawdbot/plugin-sdk';
+import { AgentEventStore } from './event-store.js';
+import { DiagnosticsStore } from './diagnostics-store.js';
+import { HeartbeatTracker } from './heartbeat-tracker.js';
+import { HooksStore } from './hooks-store.js';
+import { createObservatoryQueryTool } from './tools/query-tool.js';
+import { ObservatoryService } from './service.js';
 
 export const id = 'observatory';
 
@@ -12,7 +19,23 @@ export const configSchema = {
   validate: () => ({ ok: true as const }),
   jsonSchema: {
     type: 'object',
-    properties: {},
+    properties: {
+      retention: {
+        type: 'object',
+        properties: {
+          events: { type: 'string', default: '7d' },
+          metrics: { type: 'string', default: '30d' },
+        },
+      },
+      capture: {
+        type: 'object',
+        properties: {
+          diagnostics: { type: 'boolean', default: true },
+          heartbeats: { type: 'boolean', default: true },
+          agentEvents: { type: 'boolean', default: true },
+        },
+      },
+    },
     additionalProperties: false,
   },
 };
@@ -34,13 +57,237 @@ interface AgentSessionSummary {
   sessionKey: string;
   sessionId: string;
   updatedAt: number;
+  displayName?: string;
+  chatType?: string;
   archived?: boolean;
   archivedAt?: number;
   archiveReason?: string;
 }
 
-export function register(api: ClawdbotPluginApi) {
+export function register(api: MoltbotPluginApi) {
   api.logger.info('🔭 Observatory API initializing...');
+
+  // --- Event Stores ---
+  const agentEventStore = new AgentEventStore({ maxEvents: 1000, maxAge: 24 * 60 * 60 * 1000 });
+  const diagnosticsStore = new DiagnosticsStore({ maxEvents: 1000, maxAge: 24 * 60 * 60 * 1000 });
+  const heartbeatTracker = new HeartbeatTracker({ maxEvents: 100, maxAge: 7 * 24 * 60 * 60 * 1000 });
+  const hooksStore = new HooksStore({ maxEvents: 500, maxAge: 24 * 60 * 60 * 1000 });
+
+  // --- Event Subscriptions ---
+  const pluginConfig = api.pluginConfig as any;
+  const captureAgentEvents = pluginConfig?.capture?.agentEvents !== false;
+  const captureDiagnostics = pluginConfig?.capture?.diagnostics !== false;
+  const captureHeartbeats = pluginConfig?.capture?.heartbeats !== false;
+
+  // Get event subscription functions from runtime
+  const eventsApi = (api.runtime as any).events;
+
+  // Subscribe to agent events
+  if (captureAgentEvents && eventsApi?.onAgentEvent) {
+    const unsubscribeAgent = eventsApi.onAgentEvent((event: any) => {
+      try {
+        const id = agentEventStore.add(event);
+        // Broadcast to live feed
+        broadcastEvent('agent', { ...event, id });
+      } catch (err) {
+        api.logger.warn?.(`[observatory] Failed to store agent event: ${err}`);
+      }
+    });
+    api.logger.info('🔭 Observatory: subscribed to agent events');
+  } else if (captureAgentEvents) {
+    api.logger.warn('🔭 Observatory: onAgentEvent not available in runtime');
+  }
+
+  // Subscribe to diagnostic events
+  if (captureDiagnostics) {
+    const unsubscribeDiagnostic = onDiagnosticEvent((event) => {
+      try {
+        const id = diagnosticsStore.add(event);
+        // Broadcast to live feed
+        broadcastEvent('diagnostic', { ...event, id });
+      } catch (err) {
+        api.logger.warn?.(`[observatory] Failed to store diagnostic event: ${err}`);
+      }
+    });
+    api.logger.info('🔭 Observatory: subscribed to diagnostic events');
+  }
+
+  // Subscribe to heartbeat events
+  if (captureHeartbeats && eventsApi?.onHeartbeatEvent) {
+    const unsubscribeHeartbeat = eventsApi.onHeartbeatEvent((event: any) => {
+      try {
+        const id = heartbeatTracker.add(event);
+        // Broadcast to live feed
+        broadcastEvent('heartbeat', { ...event, id });
+      } catch (err) {
+        api.logger.warn?.(`[observatory] Failed to store heartbeat event: ${err}`);
+      }
+    });
+    api.logger.info('🔭 Observatory: subscribed to heartbeat events');
+  } else if (captureHeartbeats) {
+    api.logger.warn('🔭 Observatory: onHeartbeatEvent not available in runtime');
+  }
+
+  // --- Lifecycle Hooks ---
+  // Register lifecycle hooks to capture key events
+
+  // before_agent_start hook
+  api.on('before_agent_start', async (event, ctx) => {
+    try {
+      const id = hooksStore.add('before_agent_start', ctx as any, event as any);
+      // Broadcast to live feed
+      broadcastEvent('hook', { hookName: 'before_agent_start', context: ctx, event, id });
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store before_agent_start hook: ${err}`);
+    }
+  });
+
+  // agent_end hook
+  api.on('agent_end', async (event, ctx) => {
+    try {
+      hooksStore.add('agent_end', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store agent_end hook: ${err}`);
+    }
+  });
+
+  // session_start hook
+  api.on('session_start', async (event, ctx) => {
+    try {
+      hooksStore.add('session_start', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store session_start hook: ${err}`);
+    }
+  });
+
+  // session_end hook
+  api.on('session_end', async (event, ctx) => {
+    try {
+      hooksStore.add('session_end', ctx as any, event as any);
+
+      // CRITICAL: Mark session as completed in all stores to preserve full session history
+      if ((ctx as any).sessionKey) {
+        const sessionKey = (ctx as any).sessionKey;
+        agentEventStore.markSessionCompleted(sessionKey);
+        diagnosticsStore.markSessionCompleted(sessionKey);
+        hooksStore.markSessionCompleted(sessionKey);
+        api.logger.debug?.(`🔭 Observatory: marked session ${sessionKey} as completed`);
+      }
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store session_end hook: ${err}`);
+    }
+  });
+
+  // message_received hook
+  api.on('message_received', async (event, ctx) => {
+    try {
+      hooksStore.add('message_received', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store message_received hook: ${err}`);
+    }
+  });
+
+  // message_sending hook
+  api.on('message_sending', async (event, ctx) => {
+    try {
+      hooksStore.add('message_sending', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store message_sending hook: ${err}`);
+    }
+  });
+
+  // message_sent hook
+  api.on('message_sent', async (event, ctx) => {
+    try {
+      hooksStore.add('message_sent', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store message_sent hook: ${err}`);
+    }
+  });
+
+  // before_tool_call hook
+  api.on('before_tool_call', async (event, ctx) => {
+    try {
+      hooksStore.add('before_tool_call', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store before_tool_call hook: ${err}`);
+    }
+  });
+
+  // after_tool_call hook
+  api.on('after_tool_call', async (event, ctx) => {
+    try {
+      hooksStore.add('after_tool_call', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store after_tool_call hook: ${err}`);
+    }
+  });
+
+  // tool_result_persist hook (synchronous)
+  api.on('tool_result_persist', (event, ctx) => {
+    try {
+      hooksStore.add('tool_result_persist', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store tool_result_persist hook: ${err}`);
+    }
+  });
+
+  // gateway_start hook
+  api.on('gateway_start', async (event, ctx) => {
+    try {
+      hooksStore.add('gateway_start', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store gateway_start hook: ${err}`);
+    }
+  });
+
+  // gateway_stop hook
+  api.on('gateway_stop', async (event, ctx) => {
+    try {
+      hooksStore.add('gateway_stop', ctx as any, event as any);
+    } catch (err) {
+      api.logger.warn?.(`[observatory] Failed to store gateway_stop hook: ${err}`);
+    }
+  });
+
+  api.logger.debug?.('🔭 Observatory: registered lifecycle hooks');
+
+  // --- Agent Tool Registration ---
+  // Register a tool that allows agents to query Observatory data
+  const observatoryTool = createObservatoryQueryTool({
+    agentEventStore,
+    diagnosticsStore,
+    heartbeatTracker,
+    hooksStore,
+  });
+
+  api.registerTool(observatoryTool, { optional: true });
+  api.logger.debug?.('🔭 Observatory: registered agent tool');
+
+  // --- Background Service Registration ---
+  // Create and register background service for metrics aggregation
+  let observatoryService: ObservatoryService | null = null;
+
+  api.registerService({
+    id: 'observatory-aggregator',
+    start: async (ctx) => {
+      observatoryService = new ObservatoryService(ctx, {
+        agentEventStore,
+        diagnosticsStore,
+        heartbeatTracker,
+        hooksStore,
+      });
+      await observatoryService.start();
+    },
+    stop: async (ctx) => {
+      if (observatoryService) {
+        await observatoryService.stop();
+        observatoryService = null;
+      }
+    },
+  });
+
+  api.logger.debug?.('🔭 Observatory: registered background service');
 
   // --- Cache for stats (60s TTL) ---
   let statsCache: { stats: any; timestamp: number } | null = null;
@@ -50,6 +297,18 @@ export function register(api: ClawdbotPluginApi) {
   const connections = new Set<(line: string) => void>();
   let tail: Tail | null = null;
   let tailRetry: NodeJS.Timeout | null = null;
+
+  // Broadcast events to connected clients
+  const broadcastEvent = (eventType: string, data: any) => {
+    const message = JSON.stringify({ type: eventType, data, ts: Date.now() });
+    for (const send of connections) {
+      try {
+        send(message);
+      } catch (err) {
+        // Ignore send errors
+      }
+    }
+  };
 
   const clearTailRetry = () => {
     if (!tailRetry) return;
@@ -270,17 +529,159 @@ export function register(api: ClawdbotPluginApi) {
   };
 
   // --- HTTP Handler ---
-  const handler: ClawdbotPluginHttpHandler = async (req: IncomingMessage, res: ServerResponse) => {
+  const handler: MoltbotPluginHttpHandler = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '/', 'http://localhost');
-    
+
     // CORS Preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*', 
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
       });
       res.end();
+      return true;
+    }
+
+    // === NEW EVENT API ENDPOINTS ===
+
+    // GET /observatory/api/events/agent - Query agent events
+    if (url.pathname === '/observatory/api/events/agent') {
+      const runId = url.searchParams.get('runId');
+      const sessionKey = url.searchParams.get('sessionKey');
+      const stream = url.searchParams.get('stream');
+      const since = url.searchParams.get('since');
+      const limit = url.searchParams.get('limit');
+
+      const events = agentEventStore.query({
+        runId: runId ?? undefined,
+        sessionKey: sessionKey ?? undefined,
+        stream: stream ?? undefined,
+        since: since ? parseInt(since, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : 100,
+      });
+
+      sendJson(res, { events, stats: agentEventStore.getStats() });
+      return true;
+    }
+
+    // GET /observatory/api/events/diagnostics - Query diagnostic events
+    if (url.pathname === '/observatory/api/events/diagnostics') {
+      const type = url.searchParams.get('type');
+      const sessionKey = url.searchParams.get('sessionKey');
+      const channel = url.searchParams.get('channel');
+      const since = url.searchParams.get('since');
+      const limit = url.searchParams.get('limit');
+
+      const events = diagnosticsStore.query({
+        type: type ?? undefined,
+        sessionKey: sessionKey ?? undefined,
+        channel: channel ?? undefined,
+        since: since ? parseInt(since, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : 100,
+      });
+
+      sendJson(res, { events, stats: diagnosticsStore.getStats(), summary: diagnosticsStore.getSummary() });
+      return true;
+    }
+
+    // GET /observatory/api/events/heartbeats - Query heartbeat events
+    if (url.pathname === '/observatory/api/events/heartbeats') {
+      const status = url.searchParams.get('status') as any;
+      const channel = url.searchParams.get('channel');
+      const since = url.searchParams.get('since');
+      const limit = url.searchParams.get('limit');
+
+      const events = heartbeatTracker.query({
+        status: status ?? undefined,
+        channel: channel ?? undefined,
+        since: since ? parseInt(since, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : 20,
+      });
+
+      sendJson(res, { events, stats: heartbeatTracker.getStats() });
+      return true;
+    }
+
+    // GET /observatory/api/runs/{runId}/timeline - Detailed execution timeline
+    if (url.pathname.startsWith('/observatory/api/runs/') && url.pathname.endsWith('/timeline')) {
+      const runId = url.pathname.split('/')[4];
+      if (!runId) {
+        sendError(res, 'Missing runId', 400);
+        return true;
+      }
+
+      const events = agentEventStore.getByRunId(runId);
+      const timeline = events.map(e => ({
+        seq: e.seq,
+        ts: e.ts,
+        stream: e.stream,
+        data: e.data,
+      }));
+
+      sendJson(res, { runId, timeline, totalEvents: timeline.length });
+      return true;
+    }
+
+    // GET /observatory/api/diagnostics/summary - Aggregated diagnostic metrics
+    if (url.pathname === '/observatory/api/diagnostics/summary') {
+      const summary = diagnosticsStore.getSummary();
+      const stats = diagnosticsStore.getStats();
+      const recent = diagnosticsStore.getRecent(10);
+
+      sendJson(res, { summary, stats, recent });
+      return true;
+    }
+
+    // GET /observatory/api/heartbeats/health - Heartbeat health status
+    if (url.pathname === '/observatory/api/heartbeats/health') {
+      const stats = heartbeatTracker.getStats();
+      const lastEvent = heartbeatTracker.getLastEvent();
+      const consecutiveFailures = heartbeatTracker.getConsecutiveFailures();
+
+      sendJson(res, {
+        ...stats,
+        lastEvent,
+        consecutiveFailures,
+        healthy: consecutiveFailures < 3 && stats.successRate >= 0.8,
+      });
+      return true;
+    }
+
+    // GET /observatory/api/hooks - Query lifecycle hook events
+    if (url.pathname === '/observatory/api/hooks') {
+      const hookName = url.searchParams.get('hookName');
+      const sessionKey = url.searchParams.get('sessionKey');
+      const since = url.searchParams.get('since');
+      const limit = url.searchParams.get('limit');
+
+      const events = hooksStore.query({
+        hookName: hookName ?? undefined,
+        sessionKey: sessionKey ?? undefined,
+        since: since ? parseInt(since, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : 50,
+      });
+
+      sendJson(res, { events, stats: hooksStore.getStats() });
+      return true;
+    }
+
+    // GET /observatory/api/metrics/history - Get aggregated metrics history
+    if (url.pathname === '/observatory/api/metrics/history') {
+      const limit = url.searchParams.get('limit');
+      const history = observatoryService?.getMetricsHistory(
+        limit ? parseInt(limit, 10) : undefined
+      ) ?? [];
+
+      sendJson(res, { history, count: history.length });
+      return true;
+    }
+
+    // GET /observatory/api/metrics/latest - Get latest aggregated metrics
+    if (url.pathname === '/observatory/api/metrics/latest') {
+      const latest = observatoryService?.getLatestMetrics() ?? null;
+
+      sendJson(res, { metrics: latest });
       return true;
     }
 
@@ -369,6 +770,8 @@ export function register(api: ClawdbotPluginApi) {
               sessionKey: key,
               sessionId: sessionData.sessionId,
               updatedAt: sessionData.updatedAt,
+              displayName: sessionData.displayName,
+              chatType: sessionData.chatType,
             });
             if (sessionData.sessionId) {
               activeSessionIds.add(sessionData.sessionId);

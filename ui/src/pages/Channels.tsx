@@ -29,7 +29,10 @@ interface GroupActivity {
 
 // Parse session key to extract channel/group info
 function parseSessionKey(sessionKey: string): { channel?: string; accountId?: string; groupId?: string } | null {
-  // Session keys are like: agent:agentId:channel:group:groupId or agent:agentId:channel:dm:userId
+  // Session keys are like:
+  // - WhatsApp: agent:agentId:whatsapp:group:groupId@g.us
+  // - Slack: agent:agentId:slack:channel:channelId or agent:agentId:slack:channel:channelName
+  // - Telegram: agent:agentId:telegram:group:groupId
   const parts = sessionKey.split(":")
   if (parts.length < 3) return null
 
@@ -40,16 +43,53 @@ function parseSessionKey(sessionKey: string): { channel?: string; accountId?: st
 
   const channel = rest[0]
 
-  // Look for group or dm
+  // Look for group or dm (WhatsApp, Telegram)
   if (rest.length >= 3 && rest[1] === "group") {
-    return { channel, accountId: "default", groupId: rest[2] }
+    return { channel, accountId: "default", groupId: rest.slice(2).join(":") }
   }
 
   if (rest.length >= 3 && rest[1] === "dm") {
-    return { channel, accountId: "default", groupId: `dm:${rest[2]}` }
+    return { channel, accountId: "default", groupId: `dm:${rest.slice(2).join(":")}` }
   }
 
-  return { channel, accountId: "default" }
+  // Look for channel (Slack)
+  if (rest.length >= 3 && rest[1] === "channel") {
+    // Slack channels might have threads, so only take the channel ID
+    return { channel, accountId: "default", groupId: rest[2] }
+  }
+
+  return null
+}
+
+// Parse displayName to extract human-readable name
+function parseDisplayName(displayName: string | undefined): string | null {
+  if (!displayName) return null
+
+  // WhatsApp: "whatsapp:g-group-name" -> "group-name"
+  if (displayName.startsWith("whatsapp:g-")) {
+    return displayName.slice("whatsapp:g-".length)
+  }
+
+  // Slack: "slack:#channel-name" -> "channel-name"
+  if (displayName.startsWith("slack:#")) {
+    return displayName.slice("slack:#".length)
+  }
+
+  // Slack thread: "Slack thread #channel-name: ..." -> extract channel name
+  const slackThreadMatch = displayName.match(/^Slack thread #([^:]+):/)
+  if (slackThreadMatch) {
+    return slackThreadMatch[1]
+  }
+
+  // Telegram: "telegram:..." or similar patterns
+  if (displayName.includes(":")) {
+    const parts = displayName.split(":")
+    if (parts.length >= 2) {
+      return parts[1]
+    }
+  }
+
+  return displayName
 }
 
 export function Channels() {
@@ -101,14 +141,17 @@ export function Channels() {
       const key = `${parsed.channel}:${parsed.accountId}:${parsed.groupId}`
 
       if (!activityMap.has(key)) {
-        // Try to get group name from config
+        // Get human-readable name from displayName first, fallback to config
         const channelConfig = channels[parsed.channel]
         const accountConfig = channelConfig?.accounts?.[parsed.accountId || 'default']
         const groupConfig = accountConfig?.groups?.[parsed.groupId]
 
+        const displayName = parseDisplayName(session.displayName)
+        const groupName = displayName || groupConfig?.name || parsed.groupId
+
         activityMap.set(key, {
           groupId: parsed.groupId,
-          groupName: groupConfig?.name || parsed.groupId,
+          groupName,
           channel: parsed.channel,
           accountId: parsed.accountId || 'default',
           sessionCount: 0,
