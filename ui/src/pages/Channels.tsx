@@ -62,6 +62,11 @@ function parseSessionKey(sessionKey: string): { channel?: string; accountId?: st
   return null
 }
 
+// Check if a string looks like a Slack channel ID (c + lowercase alphanumeric)
+function isSlackChannelId(str: string): boolean {
+  return /^c[0-9a-z]+$/i.test(str)
+}
+
 // Parse displayName to extract human-readable name
 function parseDisplayName(displayName: string | undefined, groupId?: string): string | null {
   if (!displayName) return null
@@ -71,20 +76,39 @@ function parseDisplayName(displayName: string | undefined, groupId?: string): st
     return displayName.slice("whatsapp:g-".length)
   }
 
-  // Slack: "slack:#channel-name" -> "channel-name"
-  if (displayName.startsWith("slack:#")) {
-    const extracted = displayName.slice("slack:#".length)
-    // If it's just an ID (starts with C and all uppercase), and groupId doesn't look like an ID, use groupId
-    if (extracted.match(/^[A-Z0-9]+$/) && groupId && !groupId.match(/^c[0-9a-z]+$/i)) {
+  // Slack with g- prefix: "slack:g-name" or "slack:g-c0ab0h2re8p"
+  if (displayName.startsWith("slack:g-")) {
+    const extracted = displayName.slice("slack:g-".length)
+    // If it looks like an ID, prefer the groupId if it's not an ID
+    if (isSlackChannelId(extracted) && groupId && !isSlackChannelId(groupId)) {
       return groupId
     }
     return extracted
   }
 
-  // Slack thread: "Slack thread #channel-name: ..." -> extract channel name
+  // Slack with # prefix: "slack:#name" or "slack:#c0ab0h2re8p"
+  if (displayName.startsWith("slack:#")) {
+    const extracted = displayName.slice("slack:#".length)
+    // If it looks like an ID (lowercase), prefer the groupId if it's not an ID
+    if (isSlackChannelId(extracted.toLowerCase()) && groupId && !isSlackChannelId(groupId)) {
+      return groupId
+    }
+    // If it's uppercase ID, also check groupId
+    if (extracted.match(/^[A-Z0-9]+$/) && groupId && !isSlackChannelId(groupId)) {
+      return groupId
+    }
+    return extracted
+  }
+
+  // Slack thread: "Slack thread #CHANNELID: ..." or "Slack thread #channel-name: ..."
   const slackThreadMatch = displayName.match(/^Slack thread #([^:]+):/)
   if (slackThreadMatch) {
-    return slackThreadMatch[1]
+    const extracted = slackThreadMatch[1]
+    // If it's an ID, prefer groupId if available and not an ID
+    if ((isSlackChannelId(extracted) || extracted.match(/^[A-Z0-9]+$/)) && groupId && !isSlackChannelId(groupId)) {
+      return groupId
+    }
+    return extracted
   }
 
   // Telegram: "telegram:..." or similar patterns
