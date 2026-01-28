@@ -62,7 +62,7 @@ function parseSessionKey(sessionKey: string): { channel?: string; accountId?: st
 }
 
 // Parse displayName to extract human-readable name
-function parseDisplayName(displayName: string | undefined): string | null {
+function parseDisplayName(displayName: string | undefined, groupId?: string): string | null {
   if (!displayName) return null
 
   // WhatsApp: "whatsapp:g-group-name" -> "group-name"
@@ -72,7 +72,12 @@ function parseDisplayName(displayName: string | undefined): string | null {
 
   // Slack: "slack:#channel-name" -> "channel-name"
   if (displayName.startsWith("slack:#")) {
-    return displayName.slice("slack:#".length)
+    const extracted = displayName.slice("slack:#".length)
+    // If it's just an ID (starts with C and all uppercase), and groupId doesn't look like an ID, use groupId
+    if (extracted.match(/^[A-Z0-9]+$/) && groupId && !groupId.match(/^c[0-9a-z]+$/i)) {
+      return groupId
+    }
+    return extracted
   }
 
   // Slack thread: "Slack thread #channel-name: ..." -> extract channel name
@@ -146,8 +151,13 @@ export function Channels() {
         const accountConfig = channelConfig?.accounts?.[parsed.accountId || 'default']
         const groupConfig = accountConfig?.groups?.[parsed.groupId]
 
-        const displayName = parseDisplayName(session.displayName)
-        const groupName = displayName || groupConfig?.name || parsed.groupId
+        // For Slack, the groupId might already be a friendly name (not starting with 'c' and lowercase)
+        const groupIdIsFriendly = parsed.channel === 'slack' &&
+          parsed.groupId &&
+          !parsed.groupId.match(/^c[0-9a-z]+$/i)
+
+        const displayName = parseDisplayName(session.displayName, parsed.groupId)
+        const groupName = displayName || groupConfig?.name || (groupIdIsFriendly ? parsed.groupId : parsed.groupId)
 
         activityMap.set(key, {
           groupId: parsed.groupId,
