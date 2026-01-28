@@ -1,8 +1,8 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { formatDistanceToNow, format } from "date-fns"
-import { Search, ExternalLink, User } from "lucide-react"
+import { Search, ExternalLink, User, X } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,8 +14,19 @@ import { getAgentEmoji, cn } from "@/lib/utils"
 
 export function Sessions() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState("")
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [channelFilter, setChannelFilter] = useState<string | null>(null)
+  const [groupFilter, setGroupFilter] = useState<string | null>(null)
+
+  // Initialize filters from URL parameters
+  useEffect(() => {
+    const channel = searchParams.get('channel')
+    const group = searchParams.get('group')
+    if (channel) setChannelFilter(channel)
+    if (group) setGroupFilter(group)
+  }, [searchParams])
 
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
     queryKey: ["sessions"],
@@ -36,9 +47,12 @@ export function Sessions() {
     const matchesSearch =
       !search ||
       session.sessionKey.toLowerCase().includes(search.toLowerCase()) ||
-      session.agentId.toLowerCase().includes(search.toLowerCase())
+      session.agentId.toLowerCase().includes(search.toLowerCase()) ||
+      session.displayName?.toLowerCase().includes(search.toLowerCase())
     const matchesAgent = !selectedAgent || session.agentId === selectedAgent
-    return matchesSearch && matchesAgent
+    const matchesChannel = !channelFilter || session.sessionKey.includes(`:${channelFilter}:`)
+    const matchesGroup = !groupFilter || session.sessionKey.includes(groupFilter)
+    return matchesSearch && matchesAgent && matchesChannel && matchesGroup
   })
 
   // Group sessions by date
@@ -81,36 +95,82 @@ export function Sessions() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-4">
-        <div className="relative flex-1 min-w-[300px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search sessions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-4">
+          <div className="relative flex-1 min-w-[300px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search sessions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant={selectedAgent === null ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSelectedAgent(null)}
+            >
+              All
+            </Button>
+            {agents.map((agent) => (
+              <Button
+                key={agent.id}
+                variant={selectedAgent === agent.id ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedAgent(agent.id)}
+              >
+                {getAgentEmoji(agent.id)} {agent.name}
+              </Button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <Button
-            variant={selectedAgent === null ? "default" : "outline"}
-            size="sm"
-            onClick={() => setSelectedAgent(null)}
-          >
-            All
-          </Button>
-          {agents.map((agent) => (
+        {/* Active Filters */}
+        {(channelFilter || groupFilter) && (
+          <div className="flex gap-2 items-center flex-wrap">
+            <span className="text-sm text-muted-foreground">Filters:</span>
+            {channelFilter && (
+              <Badge variant="secondary" className="gap-1">
+                Channel: {channelFilter}
+                <X
+                  className="h-3 w-3 cursor-pointer hover:text-destructive"
+                  onClick={() => {
+                    setChannelFilter(null)
+                    searchParams.delete('channel')
+                    setSearchParams(searchParams)
+                  }}
+                />
+              </Badge>
+            )}
+            {groupFilter && (
+              <Badge variant="secondary" className="gap-1">
+                Group: {groupFilter.length > 20 ? groupFilter.slice(0, 20) + '...' : groupFilter}
+                <X
+                  className="h-3 w-3 cursor-pointer hover:text-destructive"
+                  onClick={() => {
+                    setGroupFilter(null)
+                    searchParams.delete('group')
+                    setSearchParams(searchParams)
+                  }}
+                />
+              </Badge>
+            )}
             <Button
-              key={agent.id}
-              variant={selectedAgent === agent.id ? "default" : "outline"}
+              variant="ghost"
               size="sm"
-              onClick={() => setSelectedAgent(agent.id)}
+              onClick={() => {
+                setChannelFilter(null)
+                setGroupFilter(null)
+                setSearchParams({})
+              }}
             >
-              {getAgentEmoji(agent.id)} {agent.name}
+              Clear all
             </Button>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Sessions List */}
@@ -148,11 +208,11 @@ export function Sessions() {
                         }
                       >
                         <CardContent className="flex items-center justify-between p-4">
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
                             <div className="text-3xl flex-shrink-0">
                               {getAgentEmoji(session.agentId)}
                             </div>
-                            <div className="min-w-0">
+                            <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-semibold">
                                   {session.agentId}
@@ -172,6 +232,11 @@ export function Sessions() {
                                     {parsed.channel}
                                   </Badge>
                                 )}
+                                {session.chatType && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {session.chatType}
+                                  </Badge>
+                                )}
                                 {isRecent && (
                                   <Badge className="text-xs bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30">
                                     <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -179,7 +244,12 @@ export function Sessions() {
                                   </Badge>
                                 )}
                               </div>
-                              <div className="text-sm text-muted-foreground truncate max-w-[400px] font-mono mt-1">
+                              {session.displayName && (
+                                <div className="text-sm font-medium mt-1 truncate max-w-[500px]">
+                                  {session.displayName}
+                                </div>
+                              )}
+                              <div className="text-xs text-muted-foreground truncate max-w-[500px] font-mono mt-0.5">
                                 {session.sessionKey}
                               </div>
                             </div>

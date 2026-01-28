@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronDown, Users, MessageCircle, Activity, Clock } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { ChevronDown, Users, MessageCircle, Activity, Clock, ExternalLink } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -98,6 +99,7 @@ function parseDisplayName(displayName: string | undefined, groupId?: string): st
 }
 
 export function Channels() {
+  const navigate = useNavigate()
   const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set(["whatsapp", "telegram", "slack"]))
 
   const { data: channelsData, isLoading: channelsLoading } = useQuery({
@@ -296,7 +298,14 @@ export function Channels() {
                       {activities.map((activity) => {
                         const isDM = activity.groupId.startsWith("dm:")
                         return (
-                          <TableRow key={`${activity.channel}:${activity.accountId}:${activity.groupId}`}>
+                          <TableRow
+                            key={`${activity.channel}:${activity.accountId}:${activity.groupId}`}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => {
+                              // Navigate to sessions page filtered by this channel and group
+                              navigate(`/sessions?channel=${activity.channel}&group=${encodeURIComponent(activity.groupId)}`)
+                            }}
+                          >
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 {isDM ? (
@@ -331,6 +340,7 @@ export function Channels() {
                               <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
                                 <Clock className="h-3 w-3" />
                                 {formatDistanceToNow(new Date(activity.lastActivity), { addSuffix: true })}
+                                <ExternalLink className="h-3 w-3 ml-2" />
                               </div>
                             </TableCell>
                           </TableRow>

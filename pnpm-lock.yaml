@@ -19,8 +19,8 @@ importers:
         specifier: ^2.2.3
         version: 2.2.3
       clawdbot:
-        specifier: link:/Users/adam/apps/clawdbot
-        version: link:../../apps/clawdbot
+        specifier: link:/home/adam/clawdbot
+        version: link:../../clawdbot
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
