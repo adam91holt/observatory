@@ -4,12 +4,13 @@
  * Full-page view for a specific agent showing:
  * - Agent identity (name, emoji, model)
  * - Session stats (tokens, cost, duration)
- * - Tabs: Conversation (with session selector) | Sessions (browsable list)
+ * - Tabs: Conversation (with session selector) | Sessions (browsable list) | Logs (live tail)
  * - Full conversation history with chat bubbles
+ * - Terminal-style live log viewer with streaming
  *
  * Route: /agent/:agentId
  *
- * Issues: #19 Conversation History, #21 Session Browser
+ * Issues: #19 Conversation History, #21 Session Browser, #22 Live Log Tail
  */
 
 import { useState, useMemo } from "react"
@@ -27,6 +28,7 @@ import {
   Bot,
   List,
   MessagesSquare,
+  Terminal,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -35,6 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ConversationHistory } from "@/components/agent/ConversationHistory"
 import { SessionBrowser } from "@/components/agent/SessionBrowser"
+import { LiveLogTail } from "@/components/agent/LiveLogTail"
 import { getTranscript, getSessions, getAgents } from "@/api/observatory"
 import { getAgentEmoji, formatCost, formatTokens, formatDuration } from "@/lib/utils"
 import type { Message } from "@/types"
@@ -363,6 +366,10 @@ export function AgentDetail() {
               </span>
             )}
           </TabsTrigger>
+          <TabsTrigger value="logs">
+            <Terminal className="h-3.5 w-3.5 mr-1.5" />
+            Logs
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="conversation" className="flex-1 min-h-0">
@@ -382,6 +389,10 @@ export function AgentDetail() {
             agentId={agentId}
             onSelectSession={handleBrowseSessionSelect}
           />
+        </TabsContent>
+
+        <TabsContent value="logs" className="flex-1 min-h-0">
+          <LiveLogTail agentId={agentId} className="h-full" />
         </TabsContent>
       </Tabs>
     </div>
