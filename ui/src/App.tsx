@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Layout } from "@/components/layout/Layout"
+import { AuthGuard } from "@/components/auth/AuthGuard"
+import { Login } from "@/pages/Login"
 import { Dashboard } from "@/pages/Dashboard"
 import { Analytics } from "@/pages/Analytics"
 import { Channels } from "@/pages/Channels"
@@ -33,7 +35,18 @@ function App() {
       <BrowserRouter basename="/observatory">
         <GlobalKeyboardShortcuts />
         <Routes>
-          <Route path="/" element={<Layout />}>
+          {/* Public route */}
+          <Route path="/login" element={<Login />} />
+
+          {/* Protected routes */}
+          <Route
+            path="/"
+            element={
+              <AuthGuard>
+                <Layout />
+              </AuthGuard>
+            }
+          >
             <Route index element={<Dashboard />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="channels" element={<Channels />} />

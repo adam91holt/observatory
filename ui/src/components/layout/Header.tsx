@@ -1,6 +1,7 @@
 import { Moon, Sun, Monitor, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { LogoutButton } from "@/components/auth/LogoutButton"
 import { useThemeStore, applyTheme } from "@/store/theme"
 import { useEffect } from "react"
 
@@ -21,28 +22,24 @@ export function Header() {
   const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border bg-card px-6">
+    <header className="flex h-14 items-center justify-between border-b bg-card px-6">
       {/* Search */}
       <div className="relative w-96">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           placeholder="Search sessions, messages..."
-          className="bg-secondary border-border pl-9 text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
+          className="pl-9"
         />
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={cycleTheme}
-          className="text-muted-foreground hover:text-foreground hover:bg-secondary"
-        >
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon" onClick={cycleTheme}>
           <ThemeIcon className="h-4 w-4" />
           <span className="sr-only">Toggle theme</span>
         </Button>
+        <LogoutButton />
       </div>
     </header>
   )
