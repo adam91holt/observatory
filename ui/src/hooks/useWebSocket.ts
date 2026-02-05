@@ -1,73 +1,139 @@
 /**
- * WebSocket Hooks for Real-Time Updates
+ * React Hooks for Gateway WebSocket
+ *
+ * Provides ergonomic hooks for components to:
+ *  - Subscribe to specific Gateway events
+ *  - Make RPC requests
+ *  - Read real-time health/presence/connection state
+ *  - Stream agent events (tool, assistant, lifecycle)
+ *  - Poll for session list updates
+ *
  * Issue: #30 WebSocket Client Integration
  */
 
-import { useEffect, useCallback, useState } from 'react'
+import { useEffect, useCallback, useState, useRef } from 'react'
 import { useAuthStore, useGatewayClient } from '@/store/auth'
-import { getWebSocketClient, type GatewaySnapshot, type ConnectionState } from '@/lib/websocket'
+import type {
+  ConnectionState,
+  AgentToolEvent,
+  AgentAssistantEvent,
+  AgentLifecycleEvent,
+  PresenceEntry,
+  HealthSnapshot,
+} from '@/lib/websocket'
+import type { AgentEvent } from '@/lib/websocket'
+
+// ---------------------------------------------------------------------------
+//  useGatewayEvent — subscribe to a single named event
+// ---------------------------------------------------------------------------
 
 /**
- * Hook to subscribe to Gateway events
+ * Subscribe to a specific Gateway event while the component is mounted
+ * and the WebSocket is connected.
+ *
+ * @example
+ * useGatewayEvent<HealthSnapshot>('health', (payload) => {
+ *   setHealth(payload)
+ * })
  */
 export function useGatewayEvent<T = unknown>(
   event: string,
   handler: (payload: T, seq?: number, stateVersion?: Record<string, number>) => void,
-  deps: React.DependencyList = []
-) {
+  deps: React.DependencyList = [],
+): void {
   const { client, isConnected } = useGatewayClient()
+
+  // Stable ref so we don't re-subscribe on every render
+  const handlerRef = useRef(handler)
+  handlerRef.current = handler
 
   useEffect(() => {
     if (!client || !isConnected) return
 
-    const unsubscribe = client.on(event, handler as (payload: unknown, seq?: number, stateVersion?: Record<string, number>) => void)
+    const unsubscribe = client.on(
+      event,
+      (payload: unknown, seq?: number, stateVersion?: Record<string, number>) => {
+        handlerRef.current(payload as T, seq, stateVersion)
+      },
+    )
+
     return unsubscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, isConnected, event, ...deps])
 }
 
-/**
- * Hook to make Gateway requests
- */
-export function useGatewayRequest() {
-  const { client, isConnected } = useGatewayClient()
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
+// ---------------------------------------------------------------------------
+//  useGatewayRequest — imperative RPC caller
+// ---------------------------------------------------------------------------
 
-  const request = useCallback(
-    async <T = unknown>(method: string, params?: Record<string, unknown>): Promise<T | null> => {
-      if (!client || !isConnected) {
-        setError(new Error('Not connected to Gateway'))
-        return null
-      }
-
-      setIsLoading(true)
-      setError(null)
-
-      try {
-        const result = await client.request<T>(method, params)
-        return result
-      } catch (err) {
-        setError(err instanceof Error ? err : new Error('Request failed'))
-        return null
-      } finally {
-        setIsLoading(false)
-      }
-    },
-    [client, isConnected]
-  )
-
-  return { request, isLoading, error }
+interface RequestState {
+  isLoading: boolean
+  error: Error | null
 }
 
 /**
- * Hook to get current Gateway state
+ * Returns a `request` function for making Gateway RPC calls,
+ * plus loading / error state.
+ *
+ * @example
+ * const { request, isLoading } = useGatewayRequest()
+ * const sessions = await request<{ sessions: Session[] }>('sessions.list')
+ */
+export function useGatewayRequest() {
+  const { client, isConnected } = useGatewayClient()
+  const [state, setState] = useState<RequestState>({ isLoading: false, error: null })
+
+  const request = useCallback(
+    async <T = unknown>(
+      method: string,
+      params?: Record<string, unknown>,
+      timeoutMs?: number,
+    ): Promise<T | null> => {
+      if (!client || !isConnected) {
+        const err = new Error('Not connected to Gateway')
+        setState({ isLoading: false, error: err })
+        return null
+      }
+
+      setState({ isLoading: true, error: null })
+
+      try {
+        const result = await client.request<T>(method, params, timeoutMs)
+        setState({ isLoading: false, error: null })
+        return result
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error('Request failed')
+        setState({ isLoading: false, error })
+        return null
+      }
+    },
+    [client, isConnected],
+  )
+
+  return { request, isLoading: state.isLoading, error: state.error }
+}
+
+// ---------------------------------------------------------------------------
+//  useGatewayState — real-time health / presence / connection
+// ---------------------------------------------------------------------------
+
+/**
+ * Provides the current Gateway connection state, health, and presence
+ * — all updated in real-time via event subscriptions.
+ *
+ * @example
+ * const { isConnected, health, presence } = useGatewayState()
  */
 export function useGatewayState() {
   const { connectionState, gatewaySnapshot } = useAuthStore()
-  const [health, setHealth] = useState(gatewaySnapshot?.health ?? null)
-  const [presence, setPresence] = useState(gatewaySnapshot?.presence ?? [])
+  const [health, setHealth] = useState<HealthSnapshot | null>(
+    gatewaySnapshot?.health ?? null,
+  )
+  const [presence, setPresence] = useState<PresenceEntry[]>(
+    gatewaySnapshot?.presence ?? [],
+  )
 
-  // Update from snapshot changes
+  // Sync from snapshot changes
   useEffect(() => {
     if (gatewaySnapshot) {
       setHealth(gatewaySnapshot.health)
@@ -75,20 +141,18 @@ export function useGatewayState() {
     }
   }, [gatewaySnapshot])
 
-  // Subscribe to health events
-  useGatewayEvent('health', (payload) => {
-    setHealth(payload as typeof health)
+  // Subscribe to live health events
+  useGatewayEvent<HealthSnapshot>('health', (payload) => {
+    if (payload) setHealth(payload)
   })
 
-  // Subscribe to presence events  
-  useGatewayEvent<{ entries: typeof presence }>('presence', (payload) => {
-    if (payload?.entries) {
-      setPresence(payload.entries)
-    }
+  // Subscribe to live presence events
+  useGatewayEvent<{ entries: PresenceEntry[] }>('presence', (payload) => {
+    if (payload?.entries) setPresence(payload.entries)
   })
 
   return {
-    connectionState,
+    connectionState: connectionState as ConnectionState,
     health,
     presence,
     isConnected: connectionState === 'connected',
@@ -96,14 +160,25 @@ export function useGatewayState() {
   }
 }
 
+// ---------------------------------------------------------------------------
+//  useAgentEvents — structured agent stream subscriptions
+// ---------------------------------------------------------------------------
+
 /**
- * Hook for agent event streams (tool calls, assistant output, lifecycle)
+ * Subscribe to agent events, split by stream type.
+ *
+ * @example
+ * useAgentEvents({
+ *   onTool: (e) => console.log('tool:', e.toolName),
+ *   onAssistant: (e) => console.log('assistant delta:', e.delta),
+ *   onLifecycle: (e) => console.log('phase:', e.phase),
+ * })
  */
 export function useAgentEvents(
   onToolEvent?: (payload: AgentToolEvent) => void,
   onAssistantEvent?: (payload: AgentAssistantEvent) => void,
-  onLifecycleEvent?: (payload: AgentLifecycleEvent) => void
-) {
+  onLifecycleEvent?: (payload: AgentLifecycleEvent) => void,
+): void {
   useGatewayEvent<AgentEvent>('agent', (payload) => {
     if (!payload) return
 
@@ -121,70 +196,11 @@ export function useAgentEvents(
   }, [onToolEvent, onAssistantEvent, onLifecycleEvent])
 }
 
-/**
- * Hook for real-time session list updates
- */
-export function useSessionsRealTime(initialSessions: Session[]) {
-  const [sessions, setSessions] = useState(initialSessions)
-  const { request } = useGatewayRequest()
+// ---------------------------------------------------------------------------
+//  useSessionsRealTime — session list polling
+// ---------------------------------------------------------------------------
 
-  // Update initial sessions when they change
-  useEffect(() => {
-    setSessions(initialSessions)
-  }, [initialSessions])
-
-  // Poll for updates (sessions don't have push events)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const result = await request<{ sessions: Session[] }>('sessions.list')
-      if (result?.sessions) {
-        setSessions(result.sessions)
-      }
-    }, 30000) // Poll every 30 seconds
-
-    return () => clearInterval(interval)
-  }, [request])
-
-  return sessions
-}
-
-// Type definitions for agent events
-interface AgentEvent {
-  stream: 'tool' | 'assistant' | 'lifecycle'
-  runId?: string
-  sessionKey?: string
-}
-
-interface AgentToolEvent extends AgentEvent {
-  stream: 'tool'
-  event: 'start' | 'update' | 'end'
-  toolName: string
-  toolId?: string
-  input?: unknown
-  output?: unknown
-  error?: string
-  durationMs?: number
-}
-
-interface AgentAssistantEvent extends AgentEvent {
-  stream: 'assistant'
-  delta?: string
-  content?: string
-}
-
-interface AgentLifecycleEvent extends AgentEvent {
-  stream: 'lifecycle'
-  phase: 'start' | 'end' | 'error'
-  error?: string
-  summary?: {
-    tokensIn?: number
-    tokensOut?: number
-    cost?: number
-    durationMs?: number
-  }
-}
-
-interface Session {
+interface SessionEntry {
   agentId: string
   sessionKey: string
   sessionId: string
@@ -192,4 +208,46 @@ interface Session {
   displayName?: string
 }
 
-export type { AgentEvent, AgentToolEvent, AgentAssistantEvent, AgentLifecycleEvent }
+/**
+ * Wraps an initial session list and polls for updates every `intervalMs`.
+ * Sessions don't have a push event, so polling is the way.
+ *
+ * @param initialSessions - The initial set from a REST fetch
+ * @param intervalMs - Polling interval (default 30 000)
+ */
+export function useSessionsRealTime(
+  initialSessions: SessionEntry[],
+  intervalMs = 30_000,
+): SessionEntry[] {
+  const [sessions, setSessions] = useState(initialSessions)
+  const { request } = useGatewayRequest()
+
+  // Sync when initial list changes (e.g. from react-query)
+  useEffect(() => {
+    setSessions(initialSessions)
+  }, [initialSessions])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const result = await request<{ sessions: SessionEntry[] }>('sessions.list')
+      if (result?.sessions) {
+        setSessions(result.sessions)
+      }
+    }, intervalMs)
+
+    return () => clearInterval(interval)
+  }, [request, intervalMs])
+
+  return sessions
+}
+
+// ---------------------------------------------------------------------------
+//  Re-exports for convenience
+// ---------------------------------------------------------------------------
+
+export type {
+  AgentEvent,
+  AgentToolEvent,
+  AgentAssistantEvent,
+  AgentLifecycleEvent,
+}

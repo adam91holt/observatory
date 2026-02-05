@@ -239,3 +239,32 @@ export function parseMessage(data: string): WebSocketMessage | null {
     return null
   }
 }
+
+// ---------------------------------------------------------------------------
+//  Singleton management
+//  store/auth.ts imports getWebSocketClient / resetWebSocketClient from here.
+//  The OpenClawWebSocket class is in '@/api/gateway-ws' but we import it here
+//  so this module remains the single source of truth for other consumers.
+//  Vite/ESM handles the circular reference fine because access is deferred
+//  to function call time (not module init time).
+// ---------------------------------------------------------------------------
+
+import { OpenClawWebSocket } from '@/api/gateway-ws'
+
+let _instance: OpenClawWebSocket | null = null
+
+/** Get (or create) the singleton WebSocket client */
+export function getWebSocketClient(): OpenClawWebSocket {
+  if (!_instance) {
+    _instance = new OpenClawWebSocket()
+  }
+  return _instance
+}
+
+/** Disconnect and destroy the singleton */
+export function resetWebSocketClient(): void {
+  if (_instance) {
+    _instance.disconnect()
+    _instance = null
+  }
+}
