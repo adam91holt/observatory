@@ -13,6 +13,7 @@ import { LiveFeed } from "@/pages/LiveFeed"
 import { Runs } from "@/pages/Runs"
 import { RunDetail } from "@/pages/RunDetail"
 import { Config } from "@/pages/Config"
+import { AgentDetail } from "@/pages/AgentDetail"
 import { CommandPalette } from "@/components/features/CommandPalette"
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 import { ToastProvider } from "@/components/ui/toast"
@@ -58,6 +59,7 @@ function App() {
             <Route path="sessions/:agentId/:sessionId" element={<SessionDetail />} />
             <Route path="sessions/:agentId/:sessionId/trace" element={<Trace />} />
             <Route path="live" element={<LiveFeed />} />
+            <Route path="agent/:agentId" element={<AgentDetail />} />
             <Route path="runs" element={<Runs />} />
             <Route path="runs/:runId" element={<RunDetail />} />
             <Route path="events" element={<Navigate to="/" replace />} />
