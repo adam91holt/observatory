@@ -13,6 +13,7 @@ import { LiveFeed } from "@/pages/LiveFeed"
 import { Runs } from "@/pages/Runs"
 import { RunDetail } from "@/pages/RunDetail"
 import { Config } from "@/pages/Config"
+import { CommandPalette } from "@/components/features/CommandPalette"
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 
 const queryClient = new QueryClient({
@@ -34,6 +35,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename="/observatory">
         <GlobalKeyboardShortcuts />
+        <CommandPalette />
         <Routes>
           {/* Public route */}
           <Route path="/login" element={<Login />} />

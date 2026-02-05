@@ -38,15 +38,6 @@ export function useGlobalKeyboardShortcuts() {
 
   useKeyboardShortcuts([
     {
-      key: "k",
-      metaKey: true,
-      description: "Quick search (coming soon)",
-      action: () => {
-        // TODO: Open command palette / search modal
-        console.log("Quick search - TODO")
-      },
-    },
-    {
       key: "e",
       metaKey: true,
       description: "Jump to errors",
