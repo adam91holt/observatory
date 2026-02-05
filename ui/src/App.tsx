@@ -15,6 +15,7 @@ import { RunDetail } from "@/pages/RunDetail"
 import { Config } from "@/pages/Config"
 import { CommandPalette } from "@/components/features/CommandPalette"
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
+import { ToastProvider } from "@/components/ui/toast"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +34,7 @@ function GlobalKeyboardShortcuts() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ToastProvider>
       <BrowserRouter basename="/observatory">
         <GlobalKeyboardShortcuts />
         <CommandPalette />
@@ -63,6 +65,7 @@ function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>
   )
 }
