@@ -15,6 +15,7 @@ import { RunDetail } from "@/pages/RunDetail"
 import { Config } from "@/pages/Config"
 import { AgentDetail } from "@/pages/AgentDetail"
 import { CommandPalette } from "@/components/features/CommandPalette"
+import { ShortcutsHelp } from "@/components/features/ShortcutsHelp"
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 import { ToastProvider } from "@/components/ui/toast"
 

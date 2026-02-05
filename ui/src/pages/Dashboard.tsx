@@ -23,6 +23,7 @@ import { RecentErrorsList } from "@/components/metrics/RecentErrorsList"
 import { ToolPerformanceTable } from "@/components/metrics/ToolPerformanceTable"
 import { SystemHealthBar } from "@/components/fleet/SystemHealthBar"
 import { FleetGrid } from "@/components/fleet/FleetGrid"
+import { ActivityFeed } from "@/components/fleet/ActivityFeed"
 import { useLiveMetrics } from "@/hooks/useLiveMetrics"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
@@ -198,6 +199,19 @@ export function Dashboard() {
           </div>
         </div>
         <FleetGrid />
+      </div>
+
+      {/* Activity Feed */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold">Activity Feed</h2>
+            <p className="text-sm text-muted-foreground">
+              Real-time events across all agents
+            </p>
+          </div>
+        </div>
+        <ActivityFeed />
       </div>
 
       {/* Live Metrics Section */}

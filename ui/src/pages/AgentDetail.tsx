@@ -1,15 +1,15 @@
 /**
- * AgentDetail — Agent detail page with conversation history
+ * AgentDetail — Agent detail page with conversation history & session browser
  *
  * Full-page view for a specific agent showing:
  * - Agent identity (name, emoji, model)
  * - Session stats (tokens, cost, duration)
- * - Session selector to switch between sessions
+ * - Tabs: Conversation (with session selector) | Sessions (browsable list)
  * - Full conversation history with chat bubbles
  *
  * Route: /agent/:agentId
  *
- * Issue: #19 Conversation History
+ * Issues: #19 Conversation History, #21 Session Browser
  */
 
 import { useState, useMemo } from "react"
@@ -25,12 +25,16 @@ import {
   Zap,
   ExternalLink,
   Bot,
+  List,
+  MessagesSquare,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ConversationHistory } from "@/components/agent/ConversationHistory"
+import { SessionBrowser } from "@/components/agent/SessionBrowser"
 import { getTranscript, getSessions, getAgents } from "@/api/observatory"
 import { getAgentEmoji, formatCost, formatTokens, formatDuration } from "@/lib/utils"
 import type { Message } from "@/types"
