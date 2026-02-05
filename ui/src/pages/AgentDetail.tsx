@@ -105,6 +105,9 @@ export function AgentDetail() {
   const { agentId } = useParams<{ agentId: string }>()
   const navigate = useNavigate()
 
+  // ---------- Tab state ---------- //
+  const [activeTab, setActiveTab] = useState("conversation")
+
   // ---------- Fetch agent info ---------- //
   const { data: agentsData } = useQuery({
     queryKey: ["agents"],
@@ -191,6 +194,12 @@ export function AgentDetail() {
     setActiveSessionKey(sessionKey)
   }
 
+  // ---------- Session browser click → switch to conversation tab ---------- //
+  const handleBrowseSessionSelect = (session: { sessionKey: string }) => {
+    setActiveSessionKey(session.sessionKey)
+    setActiveTab("conversation")
+  }
+
   if (!agentId) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -226,7 +235,7 @@ export function AgentDetail() {
         </div>
 
         <div className="flex items-center gap-2">
-          {currentSessionId && (
+          {activeTab === "conversation" && currentSessionId && (
             <Button
               variant="outline"
               size="sm"
@@ -240,21 +249,25 @@ export function AgentDetail() {
               Full Session
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isRefetching}
-          >
-            <RefreshCw
-              className={`h-4 w-4 mr-2 ${isRefetching ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </Button>
-          <Button variant="outline" size="sm" onClick={downloadTranscript}>
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </Button>
+          {activeTab === "conversation" && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetch()}
+                disabled={isRefetching}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${isRefetching ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+              <Button variant="outline" size="sm" onClick={downloadTranscript}>
+                <Download className="h-4 w-4 mr-2" />
+                Export
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -330,16 +343,47 @@ export function AgentDetail() {
         </Card>
       </div>
 
-      {/* ---- Conversation ---- */}
-      <Card className="flex-1 min-h-0 overflow-hidden">
-        <ConversationHistory
-          agentId={agentId}
-          sessionId={currentSessionId}
-          sessions={agentSessions}
-          onSessionChange={handleSessionChange}
-          className="h-full"
-        />
-      </Card>
+      {/* ---- Tabs: Conversation / Sessions ---- */}
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="flex flex-col flex-1 min-h-0"
+      >
+        <TabsList className="shrink-0 w-fit">
+          <TabsTrigger value="conversation">
+            <MessagesSquare className="h-3.5 w-3.5 mr-1.5" />
+            Conversation
+          </TabsTrigger>
+          <TabsTrigger value="sessions">
+            <List className="h-3.5 w-3.5 mr-1.5" />
+            Sessions
+            {agentSessions.length > 0 && (
+              <span className="ml-1.5 text-[10px] opacity-70">
+                {agentSessions.length}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="conversation" className="flex-1 min-h-0">
+          <Card className="h-full overflow-hidden">
+            <ConversationHistory
+              agentId={agentId}
+              sessionId={currentSessionId}
+              sessions={agentSessions}
+              onSessionChange={handleSessionChange}
+              className="h-full"
+            />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sessions" className="flex-1 min-h-0 overflow-auto">
+          <SessionBrowser
+            agentId={agentId}
+            onSelectSession={handleBrowseSessionSelect}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
