@@ -40,6 +40,7 @@ function App() {
       <BrowserRouter basename="/observatory">
         <GlobalKeyboardShortcuts />
         <CommandPalette />
+        <ShortcutsHelp />
         <Routes>
           {/* Public route */}
           <Route path="/login" element={<Login />} />
