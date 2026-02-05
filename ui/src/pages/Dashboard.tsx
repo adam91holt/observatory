@@ -21,6 +21,7 @@ import { getAgentEmoji, getChannelIcon, formatCost, formatTokens } from "@/lib/u
 import { LiveMetricsCards } from "@/components/metrics/LiveMetricsCards"
 import { RecentErrorsList } from "@/components/metrics/RecentErrorsList"
 import { ToolPerformanceTable } from "@/components/metrics/ToolPerformanceTable"
+import { SystemHealthBar } from "@/components/fleet/SystemHealthBar"
 import { useLiveMetrics } from "@/hooks/useLiveMetrics"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
@@ -81,6 +82,15 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* System Health Bar */}
+      <SystemHealthBar
+        totalAgents={agents.length}
+        activeSessions={activeSessions}
+        metrics={metrics}
+        errorCount={errors.length}
+        isLoading={agentsLoading && liveLoading}
+      />
+
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Dashboard</h1>
