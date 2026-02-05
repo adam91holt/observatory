@@ -6,7 +6,7 @@ import {
   GitBranch,
   Settings,
   Users,
-  Telescope,
+  Shell,
   TrendingUp,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -23,13 +23,13 @@ const navItems = [
 
 export function Sidebar() {
   return (
-    <aside className="flex h-screen w-64 flex-col border-r bg-card">
+    <aside className="flex h-screen w-64 flex-col border-r border-border bg-card">
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <Telescope className="h-6 w-6 text-primary" />
+      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
+        <Shell className="h-6 w-6 text-primary" />
         <div className="flex flex-col">
-          <span className="font-semibold leading-tight">Orchestrator</span>
-          <span className="text-xs text-muted-foreground">Observatory</span>
+          <span className="font-semibold leading-tight text-foreground">The Reef</span>
+          <span className="text-xs text-muted-foreground">Mission Control</span>
         </div>
       </div>
 
@@ -44,7 +44,7 @@ export function Sidebar() {
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )
             }
           >
@@ -55,24 +55,24 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t p-4 space-y-3">
+      <div className="border-t border-border p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
-          Connected to Clawdbot
+          Connected to OpenClaw
         </p>
         <div className="space-y-1">
           <p className="text-xs font-semibold text-muted-foreground">Shortcuts</p>
           <div className="text-xs text-muted-foreground space-y-0.5">
             <div className="flex justify-between">
               <span>Quick search</span>
-              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">⌘K</kbd>
+              <kbd className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-muted-foreground">⌘K</kbd>
             </div>
             <div className="flex justify-between">
               <span>Jump to errors</span>
-              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">⌘E</kbd>
+              <kbd className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-muted-foreground">⌘E</kbd>
             </div>
             <div className="flex justify-between">
               <span>Search</span>
-              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">/</kbd>
+              <kbd className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-muted-foreground">/</kbd>
             </div>
           </div>
         </div>

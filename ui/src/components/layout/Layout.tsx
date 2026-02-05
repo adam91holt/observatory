@@ -11,7 +11,7 @@ export function Layout() {
   const panelHeight = useLiveFeedStore((s) => s.panelHeight)
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
