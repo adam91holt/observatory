@@ -187,6 +187,19 @@ export function Dashboard() {
         </Card>
       </div>
 
+      {/* Fleet Overview — Agent Cards */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold">Fleet Overview</h2>
+            <p className="text-sm text-muted-foreground">
+              Real-time status of all configured agents
+            </p>
+          </div>
+        </div>
+        <FleetGrid />
+      </div>
+
       {/* Live Metrics Section */}
       <Card>
         <div
